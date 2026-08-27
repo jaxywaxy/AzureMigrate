@@ -34,6 +34,16 @@ Two pipeline modes:
   against the central project (Decide-and-Plan on the central RG). No new project,
   and nothing in the team's landing zone.
 
+### Assumed already in place (LZ build — out of scope for this repo)
+
+- Subscriptions (central Migrate + each team's landing zone)
+- Networking + private DNS zones
+- Private endpoints for resources (created by the client platform team)
+- **Resource providers registered** (`Microsoft.Migrate`, `Microsoft.OffAzure`,
+  `Microsoft.Compute`, `Microsoft.Network`, `Microsoft.RecoveryServices`,
+  `Microsoft.DataReplication`, `Microsoft.KeyVault`, …) — done in the landing-zone build
+- Custodian teams' rights on their own landing zones
+
 ## How a team's VMs are grouped
 
 Within the shared central project, a team's servers are grouped two ways:
