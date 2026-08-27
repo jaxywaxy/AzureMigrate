@@ -1,0 +1,12 @@
+# Compiled ARM output
+*.json.tmp
+main.json
+
+# Local Azure / creds — never commit
+*.pem
+*.pfx
+sp-credentials*.json
+.azure/
+
+# OS
+.DS_Store

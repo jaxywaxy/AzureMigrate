@@ -1,0 +1,57 @@
+# ============================================================================
+# GitHub Actions pipeline — deploy an Azure Migrate project via Bicep.
+#
+# Auth: OIDC federated credentials (preferred — no long-lived secret).
+#   Set repo secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   and configure a federated credential on the SP for this repo/branch.
+#
+# Fallback auth (prototype): a single AZURE_CREDENTIALS secret holding the
+#   `az ad sp create-for-rbac --json-auth` output. See the commented block.
+# ============================================================================
+name: Deploy Azure Migrate Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Which params file to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev]
+      resourceGroup:
+        description: 'Target resource group'
+        required: true
+        default: 'rg-migrate-dev'
+
+permissions:
+  id-token: write        # required for OIDC login
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- OIDC login (preferred) -------------------------------------------
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # --- Fallback: SP secret (uncomment to use instead of OIDC) -----------
+      # - name: Azure login (SP secret)
+      #   uses: azure/login@v2
+      #   with:
+      #     creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy Bicep
+        run: |
+          chmod +x scripts/deploy.sh
+          ./scripts/deploy.sh \
+            "${{ inputs.resourceGroup }}" \
+            "environments/${{ inputs.environment }}.params.json"
