@@ -186,6 +186,10 @@ create the migrated VMs there (Owner/Contributor, or `Azure Migrate Execute Expe
 granted by the landing-zone process). This pipeline never reaches into a team's
 subscription; it stays entirely within the central Migrate subscription.
 
+Once onboarded, the team follows the **[Custodian Runbook](docs/CUSTODIAN-RUNBOOK.md)**
+for the on-prem + portal steps: deploy the appliance, install the cert, register,
+discover, assess, and migrate.
+
 ## Who needs what (RBAC matrix)
 
 | Task | Who | Rights | Automated? |
