@@ -26,6 +26,7 @@ SUBSCRIPTION_ID="${1:?subscription id required}"
 GH_REPO="${2:?github org/repo required, e.g. jaxywaxy/AzureMigrate}"
 RESOURCE_GROUP="${3:-}"          # optional — omit to scope at subscription level
 BRANCH="${4:-main}"             # branch the federated credential trusts
+GH_ENVIRONMENT="${5:-dev}"     # GitHub environment the workflow declares
 
 APP_NAME="sp-azure-migrate-automation"
 ROLE_NAME="Azure Migrate Project Deployer"
@@ -112,24 +113,38 @@ az role assignment create \
 # 4. Federated credential for GitHub Actions OIDC (idempotent)
 #    subject must match GitHub's OIDC token for this repo/branch.
 # ---------------------------------------------------------------------------
-SUBJECT="repo:${GH_REPO}:ref:refs/heads/${BRANCH}"
-if [[ -z "$(az ad app federated-credential list --id "$APP_ID" --query "[?name=='${FIC_NAME}'].name" -o tsv 2>/dev/null)" ]]; then
-  echo ">> Creating federated credential '${FIC_NAME}'"
-  FIC_JSON="$(mktemp)"
-  cat > "$FIC_JSON" <<EOF
+# Idempotently create a federated credential with a given name/subject.
+create_fic() {
+  local name="$1" subject="$2" desc="$3"
+  if [[ -n "$(az ad app federated-credential list --id "$APP_ID" --query "[?name=='${name}'].name" -o tsv 2>/dev/null)" ]]; then
+    echo ">> Federated credential '${name}' already exists — skipping."
+    return
+  fi
+  echo ">> Creating federated credential '${name}'"
+  local fic_json; fic_json="$(mktemp)"
+  cat > "$fic_json" <<EOF
 {
-  "name": "${FIC_NAME}",
+  "name": "${name}",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "${SUBJECT}",
-  "description": "GitHub Actions OIDC for ${GH_REPO}@${BRANCH}",
+  "subject": "${subject}",
+  "description": "${desc}",
   "audiences": ["api://AzureADTokenExchange"]
 }
 EOF
-  az ad app federated-credential create --id "$APP_ID" --parameters "$FIC_JSON" --output none
-  rm -f "$FIC_JSON"
-else
-  echo ">> Federated credential '${FIC_NAME}' already exists — skipping."
-fi
+  az ad app federated-credential create --id "$APP_ID" --parameters "$fic_json" --output none
+  rm -f "$fic_json"
+}
+
+# The workflow declares `environment: <env>`, so GitHub's OIDC token subject is
+# environment-scoped (repo:OWNER/REPO:environment:<env>) — that's the credential
+# that actually fires. We add the branch-scoped one too for flexibility.
+create_fic "$FIC_NAME" \
+  "repo:${GH_REPO}:ref:refs/heads/${BRANCH}" \
+  "GitHub Actions OIDC for ${GH_REPO}@${BRANCH}"
+
+create_fic "github-${GH_REPO//\//-}-env-${GH_ENVIRONMENT}" \
+  "repo:${GH_REPO}:environment:${GH_ENVIRONMENT}" \
+  "GitHub Actions OIDC for ${GH_REPO}, environment=${GH_ENVIRONMENT}"
 
 # ---------------------------------------------------------------------------
 # Output the three values for GitHub secrets
