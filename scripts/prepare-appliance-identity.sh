@@ -60,7 +60,24 @@ APP_OBJECT_ID="$(az ad app show --id "$APP_ID" --query id -o tsv)"
 SP_OBJECT_ID="$(az ad sp list --filter "appId eq '${APP_ID}'" --query "[0].id" -o tsv)"
 if [[ -z "$SP_OBJECT_ID" ]]; then
   echo ">> Creating service principal for the app"
-  SP_OBJECT_ID="$(az ad sp create --id "$APP_ID" --query id -o tsv)"
+  # With Application.ReadWrite.OwnedBy, `az ad sp create` can race the app's
+  # directory replication ("backing application ... must in the local tenant").
+  # Retry until the app is visible tenant-wide.
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if SP_OBJECT_ID="$(az ad sp create --id "$APP_ID" --query id -o tsv 2>/dev/null)" && [[ -n "$SP_OBJECT_ID" ]]; then
+      break
+    fi
+    echo "   app not yet replicated (attempt ${attempt}) — waiting 15s..."
+    sleep 15
+    # It may have actually been created on a prior attempt; re-check.
+    SP_OBJECT_ID="$(az ad sp list --filter "appId eq '${APP_ID}'" --query "[0].id" -o tsv 2>/dev/null || true)"
+    [[ -n "$SP_OBJECT_ID" ]] && break
+  done
+  if [[ -z "$SP_OBJECT_ID" ]]; then
+    echo "!! Service principal creation did not succeed after retries." >&2
+    exit 1
+  fi
+  echo "   service principal created."
 else
   echo ">> Service principal already exists — reusing."
 fi
