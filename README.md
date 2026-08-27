@@ -23,12 +23,13 @@ Team A landing zone (own sub)        Team B landing zone (own sub)
    (team's existing LZ rights)          (team's existing LZ rights)
 ```
 
-**Execute-phase scoping (the operator's one central grant):** `Azure Migrate Execute
-Expert` is a source-side role — assign it where the **project** lives (central). The
-target-side VM writes happen in the team's own LZ, covered by the rights they already
-hold there, so no separate grant is minted in the LZ. **Scope on central:** the project
-RG suffices for **agentless**; **AWS/agent-based requires the central _subscription_
-scope** (see "AWS / agent-based migration").
+**Execute-phase scoping (the custodian's one central grant):** `Azure Migrate Execute
+Expert` is a source-side role — assign it **RG-scoped** where the **project** lives
+(central). The target-side VM writes happen in the team's own LZ, covered by the rights
+they already hold there, so no separate grant is minted in the LZ. **This RG scope is
+enough for both agentless AND AWS/agent-based** — the subscription-scope requirement for
+AWS falls only on the *one-time replication-appliance registration*, which the platform
+team does once (see "AWS / agent-based migration"), not on custodians.
 
 Two pipeline modes:
 
@@ -215,33 +216,36 @@ a team's landing zone — teams already have the rights to create migrated VMs t
 
 The clean model above holds for **agentless** migration (VMware, Hyper-V). **AWS EC2
 is different** — Azure Migrate treats EC2 as *physical servers*, which is **agent-based**
-and pulls in extra requirements the discovery-appliance model does not remove:
+(no agentless option) and needs a separate **Replication Appliance** + a **Recovery
+Services vault** + the **Mobility Agent** on each source VM.
 
-| AWS-specific requirement | Privilege / note | Automated? |
-|---|---|---|
-| A separate **Replication Appliance** (own EC2 host, Windows Server 2022) | distinct from the discovery appliance | ❌ manual (on-prem) |
-| **Mobility Agent** installed on every source EC2 VM | agent-based — pushed during Enable Replication | ❌ (product-driven) |
-| An **exclusive Recovery Services vault** | must be new/dedicated | ✅ `deployReplicationVault=true` pre-creates it |
-| **Register the replication appliance** | **device-code flow with the operator's own credentials**; creates an Entra app that **Application Developer cannot enable** (needs the tenant "users can register apps" setting or Global Admin) | ❌ **no preconfigured-app path exists** |
-| Operator rights to register + run replication | **Contributor + User Access Administrator** on the central subscription + `Azure Migrate Execute Expert` at **central SUBSCRIPTION scope** (see below) | ❌ standing grant on the operator |
+The subscription-scope requirement is real but **falls on registration, which happens
+once — so it lands on the platform team, not on every custodian team.** Split it:
 
-> **AWS forces subscription-scope, not RG-scope.** Microsoft's docs are explicit: *"If
-> you assign the role at the resource group scope, users can't register the Azure Site
-> Recovery replication appliance. To register the appliance, you must assign the role at
-> the subscription scope."* The role carries `Microsoft.RecoveryServices/register/action`,
-> a subscription-level action. So for **AWS**, `Execute Expert` (or Decide-and-Plan for
-> registration) must be at the **central subscription** scope — a wider blast radius than
-> the project RG. **Agentless (VMware/Hyper-V)** has no such restriction and can be scoped
-> to the project RG.
+| Task | Who | Scope | When |
+|---|---|---|---|
+| Pre-register resource providers (`Microsoft.RecoveryServices`, `Microsoft.Compute`) | LZ build | sub | already done |
+| Pre-create the exclusive Recovery Services vault | Platform | `main.bicep` (`deployReplicationVault=true`) | once |
+| **Register the shared Replication Appliance** (device-code; creates an Entra app; needs Contributor+UAA on the sub) | **Platform team** | **central subscription** | **once** |
+| Enable replication / test / migrate against that shared appliance | **Custodian** | **RG-scoped `Execute Expert`** on the project + their LZ rights | per migration |
 
-> **Honest limitation:** the preconfigured-Entra-app pattern that removes the
-> Application Developer blocker for the **discovery** appliance **does not exist** for
-> the **replication** appliance — Microsoft mandates device-code registration. So for
-> AWS, pre-creating the Recovery Services vault (`deployReplicationVault=true`) removes
-> the "create a vault during registration" step, but the operator still needs
-> Contributor+UAA on the central subscription and the tenant must allow app
-> registration. **Where the estate allows, prefer agentless paths** (the clean model);
-> treat AWS agent-based as the documented higher-privilege exception.
+**Why custodians stay RG-scoped:** the sub-scope rule comes from
+`Microsoft.RecoveryServices/register/action` (a subscription-level action) firing during
+**appliance registration**. Provider pre-registration (LZ build) plus the platform team
+registering **one shared replication appliance** removes that trigger for everyone else.
+The ongoing operations (enable replication, test, migrate) use resource-scoped
+`Microsoft.RecoveryServices/vaults/*` against the already-registered appliance — the
+Execute page even *selects the appliance from a drop-down* — so custodians run them with
+**RG-scoped Execute Expert**, no subscription grant.
+
+> **Two honest residuals for AWS:**
+> 1. **Someone** (the platform team) must still hold Contributor+UAA on the central sub
+>    and register the shared replication appliance via device-code — the preconfigured-app
+>    trick that removes the Application Developer blocker for the *discovery* appliance
+>    **does not exist** for the *replication* appliance (Microsoft mandates device-code).
+>    This is a one-time platform action, not a per-team standing grant.
+> 2. Where the estate allows, **prefer agentless** (VMware/Hyper-V) — it avoids the
+>    replication appliance entirely and keeps the fully clean RG-scoped model.
 
 ## Security notes
 
