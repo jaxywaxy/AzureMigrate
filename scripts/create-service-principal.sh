@@ -15,7 +15,7 @@
 #   ./create-service-principal.sh <subscription-id> <github-org/repo> [resource-group] [branch]
 #
 # Example:
-#   ./create-service-principal.sh 594e0bd0-... jaxywaxy/AzureMigrate rg-migrate-dev main
+#   ./create-service-principal.sh 594e0bd0-... jaxywaxy/AzureMigrate rg-migrate-platform main
 #
 # On success it prints AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID
 # for you to store as GitHub repo secrets (see scripts/set-github-secrets.sh).
@@ -26,7 +26,6 @@ SUBSCRIPTION_ID="${1:?subscription id required}"
 GH_REPO="${2:?github org/repo required, e.g. jaxywaxy/AzureMigrate}"
 RESOURCE_GROUP="${3:-}"          # optional — omit to scope at subscription level
 BRANCH="${4:-main}"             # branch the federated credential trusts
-GH_ENVIRONMENT="${5:-dev}"     # GitHub environment the workflow declares
 
 APP_NAME="sp-azure-migrate-automation"
 ROLE_NAME="Azure Migrate Project Deployer"
@@ -149,16 +148,20 @@ EOF
   rm -f "$fic_json"
 }
 
-# The workflow declares `environment: <env>`, so GitHub's OIDC token subject is
+# Workflows declare `environment: <env>`, so GitHub's OIDC token subject is
 # environment-scoped (repo:OWNER/REPO:environment:<env>) — that's the credential
-# that actually fires. We add the branch-scoped one too for flexibility.
+# that actually fires. This repo has two workflows: platform bootstrap
+# (environment: platform) and team onboarding (environment: dev). Create a
+# credential for each, plus a branch-scoped one for flexibility.
 create_fic "$FIC_NAME" \
   "repo:${GH_REPO}:ref:refs/heads/${BRANCH}" \
   "GitHub Actions OIDC for ${GH_REPO}@${BRANCH}"
 
-create_fic "github-${GH_REPO//\//-}-env-${GH_ENVIRONMENT}" \
-  "repo:${GH_REPO}:environment:${GH_ENVIRONMENT}" \
-  "GitHub Actions OIDC for ${GH_REPO}, environment=${GH_ENVIRONMENT}"
+for env in platform dev; do
+  create_fic "github-${GH_REPO//\//-}-env-${env}" \
+    "repo:${GH_REPO}:environment:${env}" \
+    "GitHub Actions OIDC for ${GH_REPO}, environment=${env}"
+done
 
 # ---------------------------------------------------------------------------
 # Output the three values for GitHub secrets

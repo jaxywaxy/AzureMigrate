@@ -1,10 +1,11 @@
 # ============================================================================
 # GitHub Actions — onboard a custodian team onto the SHARED central Migrate
-# project. Creates the team's appliance identity (against the central project)
-# and grants the team Execute Expert on their OWN target resource group.
+# project. Creates the team's appliance identity (app + Key Vault cert +
+# Decide-and-Plan on the central RG) so the appliance can register + discover.
 #
-# Does NOT create a new Migrate project — teams share the central one.
-# Auth: same OIDC pipeline SP as the deploy workflow.
+# Does NOT create a new Migrate project — teams share the central one. Does NOT
+# touch the team's landing zone — teams already hold the rights to migrate there.
+# Auth: same OIDC pipeline SP as the platform bootstrap workflow.
 # ============================================================================
 name: Onboard Custodian Team
 

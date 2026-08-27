@@ -1,58 +1,42 @@
 # ============================================================================
-# GitHub Actions pipeline — deploy an Azure Migrate project via Bicep.
+# GitHub Actions — PLATFORM BOOTSTRAP: deploy the central Azure Migrate project.
 #
-# Auth: OIDC federated credentials (preferred — no long-lived secret).
-#   Set repo secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
-#   and configure a federated credential on the SP for this repo/branch.
+# Run ONCE (by the platform team) to stand up the shared central project +
+# storage + Key Vault. Custodian teams are onboarded separately — see
+# onboard-team.yml. Networking, DNS, and the project's private endpoint are
+# provided by the client platform (out of scope here).
 #
-# Fallback auth (prototype): a single AZURE_CREDENTIALS secret holding the
-#   `az ad sp create-for-rbac --json-auth` output. See the commented block.
+# Auth: OIDC federated credentials — repo secrets AZURE_CLIENT_ID,
+# AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, with a federated credential on the SP
+# for this repo's `platform` environment.
 # ============================================================================
-name: Deploy Azure Migrate Project
+name: Platform Bootstrap - Central Migrate Project
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Which params file to deploy'
+        description: 'GitHub environment (drives the OIDC federated credential)'
         required: true
-        default: 'dev'
+        default: 'platform'
         type: choice
-        options: [dev]
+        options: [platform]
       resourceGroup:
-        description: 'Target resource group'
+        description: 'Resource group for the central Migrate project'
         required: true
-        default: 'rg-migrate-dev'
-      projectName:
-        description: 'Migrate project name (must be UNIQUE within the subscription)'
-        required: true
-        default: 'migrate-dev-workload01'
-      custodianTeam:
-        description: 'Custodian team / workload owner (for tagging + audit)'
-        required: true
-        default: 'platform-migrations'
-      prepareApplianceIdentity:
-        description: 'Also pre-create the appliance Entra app + certificate (preconfigured-app registration)'
-        required: true
-        default: true
-        type: boolean
-      applianceName:
-        description: 'Appliance name (UNIQUE per appliance — one app registration each). Only used if prepareApplianceIdentity is true.'
-        required: false
-        default: 'appliance01'
+        default: 'rg-migrate-platform'
 
 permissions:
   id-token: write        # required for OIDC login
   contents: read
 
 jobs:
-  deploy:
+  bootstrap:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
 
-      # --- OIDC login (preferred) -------------------------------------------
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -60,35 +44,9 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # --- Fallback: SP secret (uncomment to use instead of OIDC) -----------
-      # - name: Azure login (SP secret)
-      #   uses: azure/login@v2
-      #   with:
-      #     creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Deploy Bicep
-        id: deploy
+      - name: Deploy central Migrate project
         run: |
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh \
             "${{ inputs.resourceGroup }}" \
-            "environments/${{ inputs.environment }}.params.json" \
-            "australiaeast" \
-            "projectName=${{ inputs.projectName }}" \
-            "custodianTeam=${{ inputs.custodianTeam }}"
-          # Surface the Key Vault name (a deployment output) for the next step.
-          KV_NAME=$(az deployment group show \
-            --resource-group "${{ inputs.resourceGroup }}" \
-            --name main \
-            --query "properties.outputs.keyVaultName.value" -o tsv)
-          echo "keyVaultName=${KV_NAME}" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare appliance identity
-        if: ${{ inputs.prepareApplianceIdentity }}
-        run: |
-          chmod +x scripts/prepare-appliance-identity.sh
-          ./scripts/prepare-appliance-identity.sh \
-            "${{ inputs.resourceGroup }}" \
-            "${{ inputs.projectName }}" \
-            "${{ inputs.applianceName }}" \
-            "${{ steps.deploy.outputs.keyVaultName }}"
+            "environments/platform.params.json"

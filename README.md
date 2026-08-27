@@ -73,30 +73,31 @@ their own landing zones using rights they already hold.
 ```
 main.bicep                              PLATFORM BOOTSTRAP: central project (private) + storage + Key Vault
 environments/platform.params.json       Central bootstrap params
-environments/dev.params.json            Single-project params (legacy / non-shared use)
 scripts/create-service-principal.sh     One-time pipeline SP + custom role setup
 scripts/grant-pipeline-graph-permissions.sh  One-time: Graph perm so the pipeline can create appliance apps
 scripts/prepare-appliance-identity.sh   Per-appliance: app reg + KV cert + Decide-and-Plan role
-scripts/onboard-team.sh                 Per-team: appliance identity (central) + Execute Expert on team RG
+scripts/onboard-team.sh                 Per-team: appliance identity against the central project
 scripts/deploy.sh                       what-if + deploy (platform bootstrap)
 scripts/set-github-secrets.sh           Push the 3 OIDC values as repo secrets
 .github/workflows/deploy-migrate.yml    Platform bootstrap workflow
 .github/workflows/onboard-team.yml      Team onboarding workflow
+docs/CUSTODIAN-RUNBOOK.md               On-prem + portal steps a team follows after onboarding
 ```
 
-## What gets deployed
+## What gets deployed (platform bootstrap)
 
 | Resource | Type | Purpose |
 |---|---|---|
 | Migrate project | `Microsoft.Migrate/migrateProjects` | Container for discovery/assessment tools |
-| Assessment project | `Microsoft.Migrate/assessmentProjects` | Holds server assessments (EC2→Azure VM sizing) |
+| Assessment project | `Microsoft.Migrate/assessmentProjects` | Holds server assessments (EC2→Azure VM sizing); `publicNetworkAccess: Disabled` |
 | Storage account | `Microsoft.Storage/storageAccounts` | Discovery / dependency data; TLS1.2, no public blob |
+| Key Vault | `Microsoft.KeyVault/vaults` | Holds appliance certificates (RBAC mode) |
 
 ## 1. Test locally (personal subscription)
 
 ```bash
 az login
-./scripts/deploy.sh rg-migrate-dev environments/dev.params.json
+./scripts/deploy.sh rg-migrate-platform environments/platform.params.json
 ```
 
 `deploy.sh` creates the RG, runs `what-if`, then deploys and prints outputs.
@@ -105,25 +106,24 @@ az login
 
 ```bash
 # Subscription-scoped:
-./scripts/create-service-principal.sh <subscription-id>
+./scripts/create-service-principal.sh <subscription-id> jaxywaxy/AzureMigrate
 
 # Or narrowed to a single RG (tighter blast radius):
-./scripts/create-service-principal.sh <subscription-id> rg-migrate-dev
+./scripts/create-service-principal.sh <subscription-id> jaxywaxy/AzureMigrate rg-migrate-platform
 ```
 
 This creates a least-privilege custom role (`Microsoft.Migrate/*`,
-`Microsoft.OffAzure/*`, scoped storage + deployment actions) and an SP bound to
-it. Capture the JSON output into your secret store.
+`Microsoft.OffAzure/*`, Key Vault, scoped role-assignment + deployment actions)
+and an OIDC-enabled SP bound to it.
 
-## 3. Pipeline auth
+## 3. Pipeline auth (OIDC — no stored secret)
 
-**Preferred — OIDC (no stored secret):** set repo secrets `AZURE_CLIENT_ID`,
-`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` and add a federated credential on the
-SP for this repo/branch. The workflow's `id-token: write` permission is already set.
-
-**Fallback — SP secret:** store the `create-for-rbac --json-auth` output as
-`AZURE_CREDENTIALS` and uncomment the SP-secret login block in
-`.github/workflows/deploy-migrate.yml`.
+Set repo secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+(use `scripts/set-github-secrets.sh`) and add a federated credential on the SP for
+this repo's environment. `create-service-principal.sh` creates the credential;
+both workflows declare `id-token: write`. GitHub's OIDC token subject is
+environment-scoped (`repo:<org>/<repo>:environment:<env>`), so the credential
+subject must match the workflow's `environment:` value.
 
 ## Appliance identity (preconfigured Entra app)
 
@@ -142,8 +142,8 @@ it needs to create app registrations, and refresh its custom role:
 ./scripts/create-service-principal.sh <sub-id> jaxywaxy/AzureMigrate   # re-run: expands the custom role
 ```
 
-**Per appliance (in the pipeline):** the workflow's `prepareApplianceIdentity` input
-(default on) runs `scripts/prepare-appliance-identity.sh`, which:
+**Per appliance (in the pipeline):** the **Onboard Custodian Team** workflow runs
+`scripts/prepare-appliance-identity.sh`, which:
 
 1. creates an app registration + SP named `migrate-appliance-<applianceName>`,
 2. generates a self-signed cert **inside Key Vault** (private key never leaves it),
