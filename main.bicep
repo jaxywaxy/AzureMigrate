@@ -1,20 +1,20 @@
 // ============================================================================
-// Azure Migrate — PLATFORM BOOTSTRAP (central shared project)
+// Azure Migrate — appliance support resources (for the PRE-DEPLOYED project)
 //
-// Deploys the ONE central Azure Migrate project the platform team owns:
-//   - migrate project + assessment project (public network access off by default)
-//   - supporting storage
-//   - optional Private Endpoint + Private DNS zones onto the hub VNet
-//   - Key Vault for appliance certificates
+// The central Azure Migrate project, its assessment project, supporting storage,
+// networking, DNS, and the private endpoint are ALREADY provisioned by the
+// client platform / landing-zone build. This template does NOT create them.
 //
-// Custodian teams SHARE this project — each registers their own appliance to it
-// and migrates into their own target RG. They are onboarded separately (see
-// scripts/onboard-team.sh); this template is run ONCE by the platform team.
+// It adds only the resources this automation needs, into the EXISTING project's
+// resource group:
+//   - Key Vault for the appliance certificates the pipeline generates
+//     (+ Certificates Officer for the pipeline SP)
+//   - optional Recovery Services vault for AGENT-BASED migration (AWS/physical)
 //
-// Private Link note: configuring the private endpoint needs subscription
-// Contributor/UAA/Owner and is a platform action — never a custodian one.
+// Run by the platform team, into the central project's resource group. Custodian
+// teams are onboarded separately (scripts/onboard-team.sh).
 //
-// Scope: resourceGroup. Create the RG first (see deploy.sh / pipeline).
+// Scope: resourceGroup (the central project's RG).
 // ============================================================================
 
 targetScope = 'resourceGroup'
@@ -23,27 +23,19 @@ targetScope = 'resourceGroup'
 // Parameters
 // ---------------------------------------------------------------------------
 
-@description('Name of the Azure Migrate project. Must be unique within the subscription/region.')
+@description('Name of the EXISTING central Azure Migrate project. Used only for deterministic naming/tagging — the project itself is not created here.')
 @minLength(2)
 @maxLength(60)
 param projectName string
 
-@description('Azure region for the Migrate project and storage. Migrate metadata region — keep consistent per subscription.')
+@description('Azure region for the support resources. Keep consistent with the central project.')
 param location string = resourceGroup().location
 
-@description('The custodian team / workload this project belongs to. Used for tagging and audit.')
-param custodianTeam string
+@description('Owning team label for tagging/audit.')
+param custodianTeam string = 'platform'
 
 @description('Free-form tags applied to every resource.')
 param tags object = {}
-
-@description('Storage account SKU for discovery/dependency data.')
-@allowed([
-  'Standard_LRS'
-  'Standard_GRS'
-  'Standard_ZRS'
-])
-param storageSku string = 'Standard_LRS'
 
 @description('Deploy a Key Vault to hold appliance certificates (preconfigured-app flow). Set false to skip.')
 param deployApplianceKeyVault bool = true
@@ -51,23 +43,12 @@ param deployApplianceKeyVault bool = true
 @description('Object ID of the pipeline service principal, granted Key Vault Certificates Officer so it can generate appliance certs. Required when deployApplianceKeyVault is true.')
 param pipelineSpObjectId string = ''
 
-@description('Network access to the central Migrate project. Disabled = Private Link only. The client platform team creates the private endpoint against this project (networking + DNS are pre-provisioned on the client site).')
-@allowed([
-  'Disabled'
-  'Enabled'
-])
-param projectPublicNetworkAccess string = 'Disabled'
-
 @description('Deploy an exclusive Recovery Services vault for AGENT-BASED migration (AWS/GCP/physical replication appliance). Not needed for agentless VMware/Hyper-V. See README "AWS / agent-based" section.')
 param deployReplicationVault bool = false
 
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
-
-// Storage account names: 3-24 chars, lowercase alphanumeric, globally unique.
-// Derive a deterministic-but-unique name from the project + RG id.
-var storageAccountName = take('mig${uniqueString(resourceGroup().id, projectName)}', 24)
 
 // Key Vault names: 3-24 chars, alphanumeric + hyphens, globally unique.
 var keyVaultName = take('migkv${uniqueString(resourceGroup().id, projectName)}', 24)
@@ -83,65 +64,6 @@ var commonTags = union(tags, {
   custodianTeam: custodianTeam
   provisionedVia: 'bicep-pipeline'
 })
-
-// ---------------------------------------------------------------------------
-// Migrate project
-// ---------------------------------------------------------------------------
-
-resource migrateProject 'Microsoft.Migrate/migrateProjects@2020-05-01' = {
-  name: projectName
-  location: location
-  // Tags are accepted by the REST API but absent from Bicep's bundled type
-  // index for this (older) API version — suppress the false BCP187 warning.
-  #disable-next-line BCP187
-  tags: commonTags
-  properties: {
-    // registeredTools left empty; discovery/assessment tools register at runtime.
-  }
-}
-
-// Assessment project — the resource that actually holds server assessments
-// (this is what an AWS EC2 -> Azure VM sizing exercise writes into).
-resource assessmentProject 'Microsoft.Migrate/assessmentProjects@2023-03-15' = {
-  name: '${projectName}-assessment'
-  location: location
-  tags: commonTags
-  properties: {
-    assessmentSolutionId: migrateProject.id
-    projectStatus: 'Active'
-    publicNetworkAccess: projectPublicNetworkAccess
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Supporting storage
-// ---------------------------------------------------------------------------
-
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: storageAccountName
-  location: location
-  tags: commonTags
-  sku: {
-    name: storageSku
-  }
-  kind: 'StorageV2'
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    supportsHttpsTrafficOnly: true
-    encryption: {
-      services: {
-        blob: {
-          enabled: true
-        }
-        file: {
-          enabled: true
-        }
-      }
-      keySource: 'Microsoft.Storage'
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Appliance certificate Key Vault (preconfigured-app registration flow)
@@ -185,14 +107,12 @@ resource kvCertsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 //
 // AWS EC2 migrates as a *physical server* — agent-based — which needs a separate
 // Replication Appliance and a NEW, EXCLUSIVE Recovery Services vault. Pre-creating
-// the empty vault here removes the "create a vault during registration" step (and
-// its Contributor+UAA requirement) from the custodian.
+// the empty vault here removes the "create a vault during registration" step from
+// the platform team's one-time replication-appliance setup.
 //
-// IMPORTANT: registering the replication appliance still uses device-code flow
-// with the operator's OWN credentials and creates an Entra app that Application
-// Developer CANNOT enable — so this vault reduces, but does not eliminate, the
-// privilege the operator needs on this subscription. Agentless (VMware/Hyper-V)
-// does not need this vault at all. See README "AWS / agent-based migration".
+// The replication appliance is registered ONCE by the platform team (device-code;
+// needs Contributor+UAA on this subscription) and shared. Agentless (VMware/
+// Hyper-V) does not need this vault at all. See README "AWS / agent-based migration".
 // ---------------------------------------------------------------------------
 
 resource replicationVault 'Microsoft.RecoveryServices/vaults@2024-04-01' = if (deployReplicationVault) {
@@ -203,36 +123,13 @@ resource replicationVault 'Microsoft.RecoveryServices/vaults@2024-04-01' = if (d
     name: 'RS0'
     tier: 'Standard'
   }
-  properties: {
-    publicNetworkAccess: projectPublicNetworkAccess
-  }
+  properties: {}
 }
-
-// ---------------------------------------------------------------------------
-// Private Link is NOT created here.
-//
-// The client's platform team owns networking + DNS + private-endpoint creation.
-// This template only sets the project to private (publicNetworkAccess:
-// Disabled) and exposes the values that team needs to wire the endpoint:
-//   - privateLinkTargetId  → the resource the PE connects to (assessment project)
-//   - privateLinkGroupId   → 'Default'
-//   - privateDnsZoneName   → privatelink.prod.migration.windowsazure.com
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
-output migrateProjectId string = migrateProject.id
-output migrateProjectName string = migrateProject.name
-output assessmentProjectId string = assessmentProject.id
-output storageAccountName string = storage.name
 output resourceGroupName string = resourceGroup().name
 output keyVaultName string = deployApplianceKeyVault ? keyVault.name : ''
-output projectPublicNetworkAccess string = projectPublicNetworkAccess
 output replicationVaultName string = deployReplicationVault ? replicationVault.name : ''
-
-// Values the client platform team needs to create the Migrate project's PE.
-output privateLinkTargetId string = assessmentProject.id
-output privateLinkGroupId string = 'Default'
-output privateDnsZoneName string = 'privatelink.prod.migration.windowsazure.com'

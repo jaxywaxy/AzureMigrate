@@ -1,16 +1,18 @@
 # ============================================================================
-# GitHub Actions — PLATFORM BOOTSTRAP: deploy the central Azure Migrate project.
+# GitHub Actions — PLATFORM SETUP: appliance support resources.
 #
-# Run ONCE (by the platform team) to stand up the shared central project +
-# storage + Key Vault. Custodian teams are onboarded separately — see
-# onboard-team.yml. Networking, DNS, and the project's private endpoint are
-# provided by the client platform (out of scope here).
+# The central Migrate project already exists (client platform / LZ build). Run
+# ONCE (by the platform team) to add the appliance-certificate Key Vault (+ the
+# pipeline SP's Certificates Officer role) into the existing project's RG, and
+# optionally an AWS Recovery Services vault. Does NOT create the project, storage,
+# networking, DNS, or the private endpoint. Custodian teams are onboarded
+# separately — see onboard-team.yml.
 #
 # Auth: OIDC federated credentials — repo secrets AZURE_CLIENT_ID,
 # AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, with a federated credential on the SP
 # for this repo's `platform` environment.
 # ============================================================================
-name: Platform Bootstrap - Central Migrate Project
+name: Platform Setup - Appliance Support Resources
 
 on:
   workflow_dispatch:
@@ -22,7 +24,7 @@ on:
         type: choice
         options: [platform]
       resourceGroup:
-        description: 'Resource group for the central Migrate project'
+        description: 'Resource group of the EXISTING central Migrate project'
         required: true
         default: 'rg-migrate-platform'
 
@@ -44,7 +46,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy central Migrate project
+      - name: Deploy appliance support resources
         run: |
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh \

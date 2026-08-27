@@ -33,11 +33,11 @@ team does once (see "AWS / agent-based migration"), not on custodians.
 
 Two pipeline modes:
 
-- **`platform-bootstrap`** (`main.bicep`, run once): central project (set to
-  `publicNetworkAccess: Disabled`) + storage + Key Vault. The client's platform team
-  owns the subscription, networking, DNS, and **private-endpoint creation** — this
-  template does not create them; it outputs the target ID + groupId + DNS zone name
-  the platform team wires the PE against.
+- **`platform-setup`** (`main.bicep`, run once): the central project already exists
+  (client platform / LZ build). This adds the **appliance-certificate Key Vault**
+  (+ the pipeline SP's Certificates Officer role) into the existing project's RG, and
+  optionally an AWS Recovery Services vault. It does **not** create the project,
+  storage, networking, DNS, or the private endpoint.
 - **`onboard-team`** (`onboard-team.sh`, run per team): the team's appliance identity
   against the central project (Decide-and-Plan on the central RG). No new project,
   and nothing in the team's landing zone.
@@ -79,7 +79,7 @@ their own landing zones using rights they already hold.
 ## Repo layout
 
 ```
-main.bicep                              PLATFORM BOOTSTRAP: central project (private) + storage + Key Vault
+main.bicep                              Appliance-cert Key Vault (+ optional AWS RSV) into the EXISTING project RG
 environments/platform.params.json       Central bootstrap params
 scripts/create-service-principal.sh     One-time pipeline SP + custom role setup
 scripts/grant-pipeline-graph-permissions.sh  One-time: Graph perm so the pipeline can create appliance apps
@@ -92,14 +92,21 @@ scripts/set-github-secrets.sh           Push the 3 OIDC values as repo secrets
 docs/CUSTODIAN-RUNBOOK.md               On-prem + portal steps a team follows after onboarding
 ```
 
-## What gets deployed (platform bootstrap)
+## What this template deploys
+
+The central Migrate project, its assessment project, storage, networking, DNS, and
+private endpoint are **already provisioned** (client platform / LZ build). `main.bicep`
+adds only the resources this automation needs, into the **existing project's RG**:
 
 | Resource | Type | Purpose |
 |---|---|---|
-| Migrate project | `Microsoft.Migrate/migrateProjects` | Container for discovery/assessment tools |
-| Assessment project | `Microsoft.Migrate/assessmentProjects` | Holds server assessments (EC2→Azure VM sizing); `publicNetworkAccess: Disabled` |
-| Storage account | `Microsoft.Storage/storageAccounts` | Discovery / dependency data; TLS1.2, no public blob |
-| Key Vault | `Microsoft.KeyVault/vaults` | Holds appliance certificates (RBAC mode) |
+| Key Vault | `Microsoft.KeyVault/vaults` | Holds appliance certificates the pipeline generates (RBAC mode) |
+| Certificates Officer role | role assignment | Lets the pipeline SP create certs in that vault |
+| Recovery Services vault *(optional)* | `Microsoft.RecoveryServices/vaults` | AWS/agent-based only (`deployReplicationVault=true`) |
+
+**Pre-provided (NOT created here):** Migrate project + assessment project, storage,
+subscription, networking, DNS, the project's private endpoint, resource-provider
+registration.
 
 ## 1. Test locally (personal subscription)
 
