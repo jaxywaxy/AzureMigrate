@@ -13,7 +13,7 @@ projects (which would each need their own Private Link setup).
 
 ```
 Central subscription (platform team)
-├─ Migrate PROJECT (private endpoint, private DNS)   ← shared, configured once
+├─ Migrate PROJECT (publicNetworkAccess: Disabled)   ← shared; PE wired by client platform
 ├─ pipeline SP + Key Vault for appliance certs
 └─ per-team appliance identities (app reg + cert)
 
@@ -25,8 +25,11 @@ Team A target RG                     Team B target RG
 
 Two pipeline modes:
 
-- **`platform-bootstrap`** (`main.bicep`, run once): central project + Private
-  Endpoint + DNS + Key Vault. Platform team, subscription-level rights.
+- **`platform-bootstrap`** (`main.bicep`, run once): central project (set to
+  `publicNetworkAccess: Disabled`) + storage + Key Vault. The client's platform team
+  owns the subscription, networking, DNS, and **private-endpoint creation** — this
+  template does not create them; it outputs the target ID + groupId + DNS zone name
+  the platform team wires the PE against.
 - **`onboard-team`** (`onboard-team.sh`, run per team): the team's appliance identity
   against the central project (Decide-and-Plan on the central RG). No new project,
   and nothing in the team's landing zone.
@@ -58,8 +61,8 @@ their own landing zones using rights they already hold.
 ## Repo layout
 
 ```
-main.bicep                              PLATFORM BOOTSTRAP: central project + PE + DNS + storage + Key Vault
-environments/platform.params.json       Central bootstrap params (fill in hub VNet/subnet IDs)
+main.bicep                              PLATFORM BOOTSTRAP: central project (private) + storage + Key Vault
+environments/platform.params.json       Central bootstrap params
 environments/dev.params.json            Single-project params (legacy / non-shared use)
 scripts/create-service-principal.sh     One-time pipeline SP + custom role setup
 scripts/grant-pipeline-graph-permissions.sh  One-time: Graph perm so the pipeline can create appliance apps
@@ -177,7 +180,8 @@ subscription; it stays entirely within the central Migrate subscription.
 
 | Task | Who | Rights | Automated? |
 |---|---|---|---|
-| Central project + Private Link + DNS | Platform (once) | Sub Contributor/UAA | `main.bicep` |
+| Subscription, networking, DNS, Migrate project's private endpoint | **Client platform** (pre-provided) | Sub-level | out of scope for this repo |
+| Central Migrate project (private) + storage + Key Vault | Platform (once) | project-scope deploy | `main.bicep` |
 | Grant pipeline SP the Graph app-creation perm | Global Admin (once) | admin consent | `grant-pipeline-graph-permissions.sh` |
 | Per-team appliance identity + Decide-and-Plan on **central** RG | **Pipeline** | the Graph grant + `roleAssignments/write` in central sub | `onboard-team.sh` → `prepare-appliance-identity.sh` |
 | Stand up + register appliance, run discovery/assess | Custodian, on-prem | **none in Azure** | manual (their network) |

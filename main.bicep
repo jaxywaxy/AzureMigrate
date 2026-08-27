@@ -51,21 +51,12 @@ param deployApplianceKeyVault bool = true
 @description('Object ID of the pipeline service principal, granted Key Vault Certificates Officer so it can generate appliance certs. Required when deployApplianceKeyVault is true.')
 param pipelineSpObjectId string = ''
 
-@description('Network access to the central Migrate project. Disabled = Private Link only (recommended for the central project).')
+@description('Network access to the central Migrate project. Disabled = Private Link only. The client platform team creates the private endpoint against this project (networking + DNS are pre-provisioned on the client site).')
 @allowed([
   'Disabled'
   'Enabled'
 ])
 param projectPublicNetworkAccess string = 'Disabled'
-
-@description('Deploy a Private Endpoint for the central Migrate project onto the hub VNet. Requires hubSubnetId.')
-param deployPrivateEndpoint bool = false
-
-@description('Resource ID of the hub subnet the private endpoint attaches to (e.g. /subscriptions/.../subnets/pe-subnet). Required when deployPrivateEndpoint is true.')
-param hubSubnetId string = ''
-
-@description('Resource ID of the hub VNet used to link the private DNS zones. Required when deployPrivateEndpoint is true.')
-param hubVnetId string = ''
 
 // ---------------------------------------------------------------------------
 // Variables
@@ -184,72 +175,15 @@ resource kvCertsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 }
 
 // ---------------------------------------------------------------------------
-// Private Link for the central Migrate project
+// Private Link is NOT created here.
 //
-// Private endpoint (groupId 'Default') + private DNS zone
-// 'privatelink.prod.migration.windowsazure.com' linked to the hub VNet, so
-// appliances resolve the project over the private network. This is the
-// platform-team boundary — configuring it needs subscription-level rights.
-// (Note: assessment tools also use storage/vault private endpoints; wire those
-// via the hub or extend here if your topology requires them.)
+// The client's platform team owns networking + DNS + private-endpoint creation.
+// This template only sets the project to private (publicNetworkAccess:
+// Disabled) and exposes the values that team needs to wire the endpoint:
+//   - privateLinkTargetId  → the resource the PE connects to (assessment project)
+//   - privateLinkGroupId   → 'Default'
+//   - privateDnsZoneName   → privatelink.prod.migration.windowsazure.com
 // ---------------------------------------------------------------------------
-
-var migratePrivateDnsZoneName = 'privatelink.prod.migration.windowsazure.com'
-
-resource migratePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (deployPrivateEndpoint) {
-  name: 'pe-${projectName}'
-  location: location
-  tags: commonTags
-  properties: {
-    subnet: {
-      id: hubSubnetId
-    }
-    privateLinkServiceConnections: [
-      {
-        name: 'plsc-${projectName}'
-        properties: {
-          privateLinkServiceId: assessmentProject.id
-          groupIds: [
-            'Default'
-          ]
-        }
-      }
-    ]
-  }
-}
-
-resource migratePrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (deployPrivateEndpoint) {
-  name: migratePrivateDnsZoneName
-  location: 'global'
-  tags: commonTags
-}
-
-resource migrateDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (deployPrivateEndpoint) {
-  parent: migratePrivateDnsZone
-  name: 'link-${uniqueString(hubVnetId)}'
-  location: 'global'
-  properties: {
-    registrationEnabled: false
-    virtualNetwork: {
-      id: hubVnetId
-    }
-  }
-}
-
-resource migrateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (deployPrivateEndpoint) {
-  parent: migratePrivateEndpoint
-  name: 'default'
-  properties: {
-    privateDnsZoneConfigs: [
-      {
-        name: 'migrate'
-        properties: {
-          privateDnsZoneId: migratePrivateDnsZone.id
-        }
-      }
-    ]
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Outputs
@@ -261,5 +195,9 @@ output assessmentProjectId string = assessmentProject.id
 output storageAccountName string = storage.name
 output resourceGroupName string = resourceGroup().name
 output keyVaultName string = deployApplianceKeyVault ? keyVault.name : ''
-output privateEndpointId string = deployPrivateEndpoint ? migratePrivateEndpoint.id : ''
 output projectPublicNetworkAccess string = projectPublicNetworkAccess
+
+// Values the client platform team needs to create the Migrate project's PE.
+output privateLinkTargetId string = assessmentProject.id
+output privateLinkGroupId string = 'Default'
+output privateDnsZoneName string = 'privatelink.prod.migration.windowsazure.com'

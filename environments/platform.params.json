@@ -22,15 +22,6 @@
     },
     "projectPublicNetworkAccess": {
       "value": "Disabled"
-    },
-    "deployPrivateEndpoint": {
-      "value": true
-    },
-    "hubSubnetId": {
-      "value": "REPLACE-WITH/subscriptions/<sub>/resourceGroups/<hub-rg>/providers/Microsoft.Network/virtualNetworks/<hub-vnet>/subnets/<pe-subnet>"
-    },
-    "hubVnetId": {
-      "value": "REPLACE-WITH/subscriptions/<sub>/resourceGroups/<hub-rg>/providers/Microsoft.Network/virtualNetworks/<hub-vnet>"
     }
   }
 }
