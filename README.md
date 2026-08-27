@@ -138,15 +138,31 @@ and read one Key Vault secret.
 ## Onboarding a custodian team
 
 Run the **Onboard Custodian Team** workflow (or `scripts/onboard-team.sh`) with the
-team's target RG, a unique appliance name, and the team's Entra **group** object ID.
-It creates the team's appliance identity against the central project and grants the
-group **Execute Expert** on their target RG only. No new Migrate project.
+full resource ID of the team's **landing-zone RG**, a unique appliance name, and the
+team's Entra **group** object ID. It creates the team's appliance identity against
+the central project (Decide-and-Plan on the central RG) and grants the group
+**Execute Expert** on their landing-zone RG only. No new Migrate project.
 
 ```bash
 ./scripts/onboard-team.sh \
   rg-migrate-platform migrate-platform-central migkv<...> \
-  team-payments  team-payments-appliance01  rg-team-payments  <team-group-object-id>
+  team-payments  team-payments-appliance01 \
+  /subscriptions/<TEAM-LZ-SUB>/resourceGroups/rg-team-payments \
+  <team-group-object-id>
 ```
+
+**Two subscriptions, by design:**
+- The **appliance** identity + its Decide-and-Plan role live in the **central Migrate
+  subscription** (that's where the shared project + discovery are).
+- The team's **Execute Expert** lands in the team's **own landing-zone subscription**
+  (that's where migrated VMs are created). The target RG is passed as a full resource
+  ID so it resolves to the correct subscription — it is **not** assumed to be the
+  central one, and the LZ RG must already exist.
+
+> **Cross-subscription RBAC:** the pipeline SP needs `roleAssignments/write` at the
+> team's landing-zone scope to make that grant. Either widen the custom role's
+> `AssignableScopes` / assign it in each LZ sub, or have the LZ pipeline delegate a
+> scoped role-assignment right. The pipeline SP's home sub alone is not enough.
 
 ## Who needs what (RBAC matrix)
 

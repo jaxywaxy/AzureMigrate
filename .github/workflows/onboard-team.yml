@@ -35,7 +35,7 @@ on:
         description: 'Appliance name — UNIQUE per appliance (one app registration each)'
         required: true
       targetResourceGroup:
-        description: "Team's target RG where migrated VMs land (created if absent)"
+        description: "Full resource ID of the team's landing-zone RG where VMs land (/subscriptions/<team-sub>/resourceGroups/<rg>). Must already exist."
         required: true
       teamPrincipalId:
         description: "Object ID of the team's Entra GROUP to grant Execute Expert"
