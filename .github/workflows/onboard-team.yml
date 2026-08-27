@@ -34,12 +34,6 @@ on:
       applianceName:
         description: 'Appliance name — UNIQUE per appliance (one app registration each)'
         required: true
-      targetResourceGroup:
-        description: "Full resource ID of the team's landing-zone RG where VMs land (/subscriptions/<team-sub>/resourceGroups/<rg>). Must already exist."
-        required: true
-      teamPrincipalId:
-        description: "Object ID of the team's Entra GROUP to grant Execute Expert"
-        required: true
 
 permissions:
   id-token: write
@@ -67,6 +61,4 @@ jobs:
             "${{ inputs.centralProjectName }}" \
             "${{ inputs.centralKeyVault }}" \
             "${{ inputs.teamName }}" \
-            "${{ inputs.applianceName }}" \
-            "${{ inputs.targetResourceGroup }}" \
-            "${{ inputs.teamPrincipalId }}"
+            "${{ inputs.applianceName }}"

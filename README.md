@@ -138,31 +138,22 @@ and read one Key Vault secret.
 ## Onboarding a custodian team
 
 Run the **Onboard Custodian Team** workflow (or `scripts/onboard-team.sh`) with the
-full resource ID of the team's **landing-zone RG**, a unique appliance name, and the
-team's Entra **group** object ID. It creates the team's appliance identity against
-the central project (Decide-and-Plan on the central RG) and grants the group
-**Execute Expert** on their landing-zone RG only. No new Migrate project.
+central project details, the team name, and a unique appliance name. It creates the
+team's appliance identity against the central project (Decide-and-Plan on the
+**central** RG) so the appliance can register and discover. That's all — no new
+Migrate project, and **nothing is touched in the team's landing zone**.
 
 ```bash
 ./scripts/onboard-team.sh \
   rg-migrate-platform migrate-platform-central migkv<...> \
-  team-payments  team-payments-appliance01 \
-  /subscriptions/<TEAM-LZ-SUB>/resourceGroups/rg-team-payments \
-  <team-group-object-id>
+  team-payments  team-payments-appliance01
 ```
 
-**Two subscriptions, by design:**
-- The **appliance** identity + its Decide-and-Plan role live in the **central Migrate
-  subscription** (that's where the shared project + discovery are).
-- The team's **Execute Expert** lands in the team's **own landing-zone subscription**
-  (that's where migrated VMs are created). The target RG is passed as a full resource
-  ID so it resolves to the correct subscription — it is **not** assumed to be the
-  central one, and the LZ RG must already exist.
-
-> **Cross-subscription RBAC:** the pipeline SP needs `roleAssignments/write` at the
-> team's landing-zone scope to make that grant. Either widen the custom role's
-> `AssignableScopes` / assign it in each LZ sub, or have the LZ pipeline delegate a
-> scoped role-assignment right. The pipeline SP's home sub alone is not enough.
+**The migration target is the team's own landing zone — out of scope here.**
+Custodian teams already own their landing zones and already hold the rights to
+create the migrated VMs there (Owner/Contributor, or `Azure Migrate Execute Expert`
+granted by the landing-zone process). This pipeline never reaches into a team's
+subscription; it stays entirely within the central Migrate subscription.
 
 ## Who needs what (RBAC matrix)
 
@@ -170,18 +161,17 @@ the central project (Decide-and-Plan on the central RG) and grants the group
 |---|---|---|---|
 | Central project + Private Link + DNS | Platform (once) | Sub Contributor/UAA | `main.bicep` |
 | Grant pipeline SP the Graph app-creation perm | Global Admin (once) | admin consent | `grant-pipeline-graph-permissions.sh` |
-| Per-team appliance identity (app+cert+role) | **Pipeline** | the Graph grant above | `prepare-appliance-identity.sh` |
-| Execute Expert on the team's target RG | **Pipeline** | `roleAssignments/write` | `onboard-team.sh` |
-| Stand up + register appliance, run discovery | Custodian, on-prem | **none in Azure** | manual (their network) |
-| Replicate + migrate (Execute) | Custodian | Execute Expert on **their RG only** | portal-driven |
+| Per-team appliance identity + Decide-and-Plan on **central** RG | **Pipeline** | the Graph grant + `roleAssignments/write` in central sub | `onboard-team.sh` → `prepare-appliance-identity.sh` |
+| Stand up + register appliance, run discovery/assess | Custodian, on-prem | **none in Azure** | manual (their network) |
+| Replicate + migrate (Execute) into their landing zone | Custodian | rights they **already hold** on their own LZ | portal-driven |
 
-Custodians hold **at most one** scoped Azure role (`Execute Expert` on their own RG)
-and never anything tenant-level.
+The pipeline operates **only** in the central Migrate subscription. It never touches
+a team's landing zone — teams already have the rights to create migrated VMs there.
 
 ## Security notes
 
-- Custodian teams get **zero** elevated Azure access — a single scoped `Execute
-  Expert` role on their own target RG, and pipeline trigger rights.
+- Custodian teams get **zero** elevated Azure access from this pipeline — they use
+  the landing-zone rights they already hold, plus pipeline trigger rights.
 - Central project defaults to `publicNetworkAccess: Disabled` (Private Link only).
 - Storage: `allowBlobPublicAccess: false`, `minimumTlsVersion: TLS1_2`, HTTPS-only.
 - Prefer OIDC over the long-lived SP secret for anything beyond the prototype.
