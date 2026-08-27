@@ -58,6 +58,9 @@ param pipelineSpObjectId string = ''
 ])
 param projectPublicNetworkAccess string = 'Disabled'
 
+@description('Deploy an exclusive Recovery Services vault for AGENT-BASED migration (AWS/GCP/physical replication appliance). Not needed for agentless VMware/Hyper-V. See README "AWS / agent-based" section.')
+param deployReplicationVault bool = false
+
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -71,6 +74,9 @@ var keyVaultName = take('migkv${uniqueString(resourceGroup().id, projectName)}',
 
 // Built-in role: Key Vault Certificates Officer (manage certificates).
 var kvCertsOfficerRoleId = 'a4417e6f-fecd-4de8-b567-7b0420556985'
+
+// Recovery Services vault name (agent-based / replication appliance).
+var replicationVaultName = take('rsv-mig-${uniqueString(resourceGroup().id, projectName)}', 50)
 
 var commonTags = union(tags, {
   managedBy: 'azure-migrate-automation'
@@ -175,6 +181,34 @@ resource kvCertsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 }
 
 // ---------------------------------------------------------------------------
+// Recovery Services vault for AGENT-BASED migration (AWS / GCP / physical).
+//
+// AWS EC2 migrates as a *physical server* — agent-based — which needs a separate
+// Replication Appliance and a NEW, EXCLUSIVE Recovery Services vault. Pre-creating
+// the empty vault here removes the "create a vault during registration" step (and
+// its Contributor+UAA requirement) from the custodian.
+//
+// IMPORTANT: registering the replication appliance still uses device-code flow
+// with the operator's OWN credentials and creates an Entra app that Application
+// Developer CANNOT enable — so this vault reduces, but does not eliminate, the
+// privilege the operator needs on this subscription. Agentless (VMware/Hyper-V)
+// does not need this vault at all. See README "AWS / agent-based migration".
+// ---------------------------------------------------------------------------
+
+resource replicationVault 'Microsoft.RecoveryServices/vaults@2024-04-01' = if (deployReplicationVault) {
+  name: replicationVaultName
+  location: location
+  tags: commonTags
+  sku: {
+    name: 'RS0'
+    tier: 'Standard'
+  }
+  properties: {
+    publicNetworkAccess: projectPublicNetworkAccess
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Private Link is NOT created here.
 //
 // The client's platform team owns networking + DNS + private-endpoint creation.
@@ -196,6 +230,7 @@ output storageAccountName string = storage.name
 output resourceGroupName string = resourceGroup().name
 output keyVaultName string = deployApplianceKeyVault ? keyVault.name : ''
 output projectPublicNetworkAccess string = projectPublicNetworkAccess
+output replicationVaultName string = deployReplicationVault ? replicationVault.name : ''
 
 // Values the client platform team needs to create the Migrate project's PE.
 output privateLinkTargetId string = assessmentProject.id

@@ -204,6 +204,29 @@ discover, assess, and migrate.
 The pipeline operates **only** in the central Migrate subscription. It never touches
 a team's landing zone — teams already have the rights to create migrated VMs there.
 
+## AWS / agent-based migration (the exception)
+
+The clean model above holds for **agentless** migration (VMware, Hyper-V). **AWS EC2
+is different** — Azure Migrate treats EC2 as *physical servers*, which is **agent-based**
+and pulls in extra requirements the discovery-appliance model does not remove:
+
+| AWS-specific requirement | Privilege / note | Automated? |
+|---|---|---|
+| A separate **Replication Appliance** (own EC2 host, Windows Server 2022) | distinct from the discovery appliance | ❌ manual (on-prem) |
+| **Mobility Agent** installed on every source EC2 VM | agent-based — pushed during Enable Replication | ❌ (product-driven) |
+| An **exclusive Recovery Services vault** | must be new/dedicated | ✅ `deployReplicationVault=true` pre-creates it |
+| **Register the replication appliance** | **device-code flow with the operator's own credentials**; creates an Entra app that **Application Developer cannot enable** (needs the tenant "users can register apps" setting or Global Admin) | ❌ **no preconfigured-app path exists** |
+| Operator rights to register + run replication | **Contributor + User Access Administrator** on the vault's subscription (central) + `Azure Migrate Execute Expert` on the project | ❌ standing grant on the operator |
+
+> **Honest limitation:** the preconfigured-Entra-app pattern that removes the
+> Application Developer blocker for the **discovery** appliance **does not exist** for
+> the **replication** appliance — Microsoft mandates device-code registration. So for
+> AWS, pre-creating the Recovery Services vault (`deployReplicationVault=true`) removes
+> the "create a vault during registration" step, but the operator still needs
+> Contributor+UAA on the central subscription and the tenant must allow app
+> registration. **Where the estate allows, prefer agentless paths** (the clean model);
+> treat AWS agent-based as the documented higher-privilege exception.
+
 ## Security notes
 
 - Custodian teams get **zero** elevated Azure access from this pipeline — they use
