@@ -38,6 +38,12 @@ param tags object = {}
 ])
 param storageSku string = 'Standard_LRS'
 
+@description('Deploy a Key Vault to hold appliance certificates (preconfigured-app flow). Set false to skip.')
+param deployApplianceKeyVault bool = true
+
+@description('Object ID of the pipeline service principal, granted Key Vault Certificates Officer so it can generate appliance certs. Required when deployApplianceKeyVault is true.')
+param pipelineSpObjectId string = ''
+
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -45,6 +51,12 @@ param storageSku string = 'Standard_LRS'
 // Storage account names: 3-24 chars, lowercase alphanumeric, globally unique.
 // Derive a deterministic-but-unique name from the project + RG id.
 var storageAccountName = take('mig${uniqueString(resourceGroup().id, projectName)}', 24)
+
+// Key Vault names: 3-24 chars, alphanumeric + hyphens, globally unique.
+var keyVaultName = take('migkv${uniqueString(resourceGroup().id, projectName)}', 24)
+
+// Built-in role: Key Vault Certificates Officer (manage certificates).
+var kvCertsOfficerRoleId = 'a4417e6f-fecd-4de8-b567-7b0420556985'
 
 var commonTags = union(tags, {
   managedBy: 'azure-migrate-automation'
@@ -112,6 +124,43 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 }
 
 // ---------------------------------------------------------------------------
+// Appliance certificate Key Vault (preconfigured-app registration flow)
+//
+// Holds the self-signed cert the Azure Migrate appliance authenticates with.
+// RBAC-authorization mode; the pipeline SP gets Certificates Officer so it can
+// generate certs from the pipeline. Soft-delete is on (Azure default) — a
+// redeployed vault of the same name must be RECOVERED, not recreated.
+// ---------------------------------------------------------------------------
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = if (deployApplianceKeyVault) {
+  name: keyVaultName
+  location: location
+  tags: commonTags
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Grant the pipeline SP the ability to create/manage certificates in the vault.
+resource kvCertsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployApplianceKeyVault && !empty(pipelineSpObjectId)) {
+  name: guid(keyVault.id, pipelineSpObjectId, kvCertsOfficerRoleId)
+  scope: keyVault
+  properties: {
+    principalId: pipelineSpObjectId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvCertsOfficerRoleId)
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
@@ -120,3 +169,4 @@ output migrateProjectName string = migrateProject.name
 output assessmentProjectId string = assessmentProject.id
 output storageAccountName string = storage.name
 output resourceGroupName string = resourceGroup().name
+output keyVaultName string = deployApplianceKeyVault ? keyVault.name : ''

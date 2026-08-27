@@ -31,6 +31,15 @@ on:
         description: 'Custodian team / workload owner (for tagging + audit)'
         required: true
         default: 'platform-migrations'
+      prepareApplianceIdentity:
+        description: 'Also pre-create the appliance Entra app + certificate (preconfigured-app registration)'
+        required: true
+        default: true
+        type: boolean
+      applianceName:
+        description: 'Appliance name (UNIQUE per appliance — one app registration each). Only used if prepareApplianceIdentity is true.'
+        required: false
+        default: 'appliance01'
 
 permissions:
   id-token: write        # required for OIDC login
@@ -58,6 +67,7 @@ jobs:
       #     creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy Bicep
+        id: deploy
         run: |
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh \
@@ -66,3 +76,19 @@ jobs:
             "australiaeast" \
             "projectName=${{ inputs.projectName }}" \
             "custodianTeam=${{ inputs.custodianTeam }}"
+          # Surface the Key Vault name (a deployment output) for the next step.
+          KV_NAME=$(az deployment group show \
+            --resource-group "${{ inputs.resourceGroup }}" \
+            --name main \
+            --query "properties.outputs.keyVaultName.value" -o tsv)
+          echo "keyVaultName=${KV_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare appliance identity
+        if: ${{ inputs.prepareApplianceIdentity }}
+        run: |
+          chmod +x scripts/prepare-appliance-identity.sh
+          ./scripts/prepare-appliance-identity.sh \
+            "${{ inputs.resourceGroup }}" \
+            "${{ inputs.projectName }}" \
+            "${{ inputs.applianceName }}" \
+            "${{ steps.deploy.outputs.keyVaultName }}"

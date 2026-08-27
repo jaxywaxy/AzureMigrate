@@ -12,11 +12,14 @@ the deploy and logs everything for audit.
 ## Repo layout
 
 ```
-main.bicep                          Migrate project + assessment project + storage
-environments/dev.params.json        Per-environment parameters
-scripts/create-service-principal.sh One-time SP + custom role setup
-scripts/deploy.sh                   what-if + deploy (used locally and by the pipeline)
-.github/workflows/deploy-migrate.yml  GitHub Actions workflow (OIDC or SP-secret auth)
+main.bicep                              Migrate project + assessment project + storage + appliance Key Vault
+environments/dev.params.json            Per-environment parameters
+scripts/create-service-principal.sh     One-time pipeline SP + custom role setup
+scripts/grant-pipeline-graph-permissions.sh  One-time: Graph perm so the pipeline can create appliance apps
+scripts/prepare-appliance-identity.sh   Per-appliance: app reg + KV cert + role (preconfigured-app flow)
+scripts/deploy.sh                       what-if + deploy (used locally and by the pipeline)
+scripts/set-github-secrets.sh           Push the 3 OIDC values as repo secrets
+.github/workflows/deploy-migrate.yml    GitHub Actions workflow (OIDC or SP-secret auth)
 ```
 
 ## What gets deployed
@@ -59,6 +62,47 @@ SP for this repo/branch. The workflow's `id-token: write` permission is already 
 **Fallback — SP secret:** store the `create-for-rbac --json-auth` output as
 `AZURE_CREDENTIALS` and uncomment the SP-secret login block in
 `.github/workflows/deploy-migrate.yml`.
+
+## Appliance identity (preconfigured Entra app)
+
+Registering an Azure Migrate appliance normally makes the appliance create its own
+Microsoft Entra app registration during its wizard — which requires the installer to
+hold the Entra **Application Developer** role. To keep custodian teams off tenant-level
+rights, the pipeline uses Microsoft's
+[preconfigured Entra app](https://learn.microsoft.com/azure/migrate/how-to-register-appliance-using-entra-app)
+flow and **pre-creates that identity for them**.
+
+**One-time, by a Global Admin:** grant the pipeline SP the single elevated permission
+it needs to create app registrations, and refresh its custom role:
+
+```bash
+./scripts/grant-pipeline-graph-permissions.sh   # Graph Application.ReadWrite.OwnedBy + admin consent
+./scripts/create-service-principal.sh <sub-id> jaxywaxy/AzureMigrate   # re-run: expands the custom role
+```
+
+**Per appliance (in the pipeline):** the workflow's `prepareApplianceIdentity` input
+(default on) runs `scripts/prepare-appliance-identity.sh`, which:
+
+1. creates an app registration + SP named `migrate-appliance-<applianceName>`,
+2. generates a self-signed cert **inside Key Vault** (private key never leaves it),
+3. attaches the cert's public key to the app,
+4. assigns the app the built-in **Azure Migrate Decide and Plan Expert** role on the
+   project resource group, and
+5. prints the 6 IDs the appliance registry script needs.
+
+> **One app per appliance** (Microsoft limit). Use a distinct `applianceName` per
+> appliance — you can't reuse an app registration, even within the same project.
+
+**What stays manual (on the on-prem appliance box — CI can't reach it):**
+
+1. Download the private cert from Key Vault (audited):
+   `az keyvault secret download --vault-name <kv> --name appliance-<name> --encoding base64 --file appliance-<name>.pfx`
+2. Install the `.pfx` into `LocalMachine\Personal` on the appliance.
+3. Run the MS registry script with the 6 printed values, then finish in the appliance
+   Config Manager.
+
+The custodian never needs Application Developer — only the ability to run the pipeline
+and read one Key Vault secret.
 
 ## Adding a new custodian team / project
 

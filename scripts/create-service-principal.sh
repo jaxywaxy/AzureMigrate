@@ -47,15 +47,19 @@ echo ""
 
 # ---------------------------------------------------------------------------
 # 1. Custom role (least privilege)
+#
+# Covers: Migrate/OffAzure projects, supporting storage, deployments, and — for
+# the preconfigured-appliance flow — creating role assignments (to bind the
+# appliance app to the project) and managing the Key Vault that holds the
+# appliance certificate. `roleAssignments/write` is the one broad-ish action;
+# it is required to grant the appliance app its role on the project scope.
 # ---------------------------------------------------------------------------
-if ! az role definition list --name "$ROLE_NAME" --query "[0].roleName" -o tsv 2>/dev/null | grep -q "$ROLE_NAME"; then
-  echo ">> Creating custom role '${ROLE_NAME}'"
-  ROLE_JSON="$(mktemp)"
-  cat > "$ROLE_JSON" <<EOF
+ROLE_JSON="$(mktemp)"
+cat > "$ROLE_JSON" <<EOF
 {
   "Name": "${ROLE_NAME}",
   "IsCustom": true,
-  "Description": "Deploy and manage Azure Migrate projects and supporting storage.",
+  "Description": "Deploy/manage Azure Migrate projects, supporting storage, the appliance Key Vault, and appliance role assignments.",
   "Actions": [
     "Microsoft.Migrate/*",
     "Microsoft.OffAzure/*",
@@ -63,9 +67,16 @@ if ! az role definition list --name "$ROLE_NAME" --query "[0].roleName" -o tsv 2
     "Microsoft.Storage/storageAccounts/write",
     "Microsoft.Storage/storageAccounts/delete",
     "Microsoft.Storage/storageAccounts/listKeys/action",
+    "Microsoft.KeyVault/vaults/read",
+    "Microsoft.KeyVault/vaults/write",
+    "Microsoft.KeyVault/vaults/delete",
     "Microsoft.Resources/deployments/*",
     "Microsoft.Resources/subscriptions/resourceGroups/read",
-    "Microsoft.Resources/subscriptions/resourceGroups/write"
+    "Microsoft.Resources/subscriptions/resourceGroups/write",
+    "Microsoft.Authorization/roleDefinitions/read",
+    "Microsoft.Authorization/roleAssignments/read",
+    "Microsoft.Authorization/roleAssignments/write",
+    "Microsoft.Authorization/roleAssignments/delete"
   ],
   "NotActions": [],
   "AssignableScopes": [
@@ -73,11 +84,14 @@ if ! az role definition list --name "$ROLE_NAME" --query "[0].roleName" -o tsv 2
   ]
 }
 EOF
+if ! az role definition list --name "$ROLE_NAME" --query "[0].roleName" -o tsv 2>/dev/null | grep -q "$ROLE_NAME"; then
+  echo ">> Creating custom role '${ROLE_NAME}'"
   az role definition create --role-definition "$ROLE_JSON" --output none
-  rm -f "$ROLE_JSON"
 else
-  echo ">> Custom role '${ROLE_NAME}' already exists — skipping."
+  echo ">> Custom role '${ROLE_NAME}' exists — updating its actions"
+  az role definition update --role-definition "$ROLE_JSON" --output none
 fi
+rm -f "$ROLE_JSON"
 
 # ---------------------------------------------------------------------------
 # 2. App registration + service principal (idempotent)
