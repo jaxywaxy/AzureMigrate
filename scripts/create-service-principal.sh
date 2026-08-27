@@ -1,22 +1,35 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Creates a scoped service principal for Azure Migrate deployments.
+# Creates a scoped, OIDC-enabled service principal for Azure Migrate deploys.
 #
-# The SP is granted ONLY what's needed to stand up Migrate projects in one
-# subscription (optionally narrowed to a single RG). Custodian teams never get
-# direct Azure access — the pipeline uses this SP.
+# Sets up (idempotently):
+#   1. A least-privilege custom role ("Azure Migrate Project Deployer").
+#   2. An Entra app registration + service principal.
+#   3. A role assignment for the SP at the chosen scope.
+#   4. A federated credential so GitHub Actions can log in via OIDC — no secret.
 #
-# Run once, by a subscription Owner/User Access Administrator. Capture the
-# JSON output into your pipeline secret store.
+# Custodian teams never get direct Azure access; the pipeline uses this SP.
+# Run once, by a subscription Owner / User Access Administrator.
 #
 # Usage:
-#   ./create-service-principal.sh <subscription-id> [resource-group]
+#   ./create-service-principal.sh <subscription-id> <github-org/repo> [resource-group] [branch]
+#
+# Example:
+#   ./create-service-principal.sh 594e0bd0-... jaxywaxy/AzureMigrate rg-migrate-dev main
+#
+# On success it prints AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID
+# for you to store as GitHub repo secrets (see scripts/set-github-secrets.sh).
 # ============================================================================
 set -euo pipefail
 
 SUBSCRIPTION_ID="${1:?subscription id required}"
-RESOURCE_GROUP="${2:-}"      # optional — omit to scope at subscription level
-SP_NAME="sp-azure-migrate-automation"
+GH_REPO="${2:?github org/repo required, e.g. jaxywaxy/AzureMigrate}"
+RESOURCE_GROUP="${3:-}"          # optional — omit to scope at subscription level
+BRANCH="${4:-main}"             # branch the federated credential trusts
+
+APP_NAME="sp-azure-migrate-automation"
+ROLE_NAME="Azure Migrate Project Deployer"
+FIC_NAME="github-${GH_REPO//\//-}-${BRANCH}"   # federated credential name
 
 if [[ -n "$RESOURCE_GROUP" ]]; then
   SCOPE="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}"
@@ -24,16 +37,20 @@ else
   SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
 fi
 
-echo ">> Creating service principal '${SP_NAME}' scoped to: ${SCOPE}"
+TENANT_ID="$(az account show --query tenantId -o tsv)"
 
-# Contributor is broad; we prefer a least-privilege custom role. Create it if
-# it doesn't already exist, then assign it. Contributor on the scope is the
-# fallback if you'd rather not manage a custom role for the prototype.
-ROLE_NAME="Azure Migrate Project Deployer"
+echo ">> Subscription : ${SUBSCRIPTION_ID}"
+echo ">> Scope        : ${SCOPE}"
+echo ">> GitHub repo  : ${GH_REPO} (branch: ${BRANCH})"
+echo ""
 
+# ---------------------------------------------------------------------------
+# 1. Custom role (least privilege)
+# ---------------------------------------------------------------------------
 if ! az role definition list --name "$ROLE_NAME" --query "[0].roleName" -o tsv 2>/dev/null | grep -q "$ROLE_NAME"; then
   echo ">> Creating custom role '${ROLE_NAME}'"
-  cat > /tmp/migrate-role.json <<EOF
+  ROLE_JSON="$(mktemp)"
+  cat > "$ROLE_JSON" <<EOF
 {
   "Name": "${ROLE_NAME}",
   "IsCustom": true,
@@ -55,17 +72,78 @@ if ! az role definition list --name "$ROLE_NAME" --query "[0].roleName" -o tsv 2
   ]
 }
 EOF
-  az role definition create --role-definition /tmp/migrate-role.json
-  rm -f /tmp/migrate-role.json
+  az role definition create --role-definition "$ROLE_JSON" --output none
+  rm -f "$ROLE_JSON"
+else
+  echo ">> Custom role '${ROLE_NAME}' already exists — skipping."
 fi
 
-echo ">> Creating SP and assigning role at scope"
-az ad sp create-for-rbac \
-  --name "$SP_NAME" \
-  --role "$ROLE_NAME" \
-  --scopes "$SCOPE" \
-  --json-auth
+# ---------------------------------------------------------------------------
+# 2. App registration + service principal (idempotent)
+# ---------------------------------------------------------------------------
+APP_ID="$(az ad app list --display-name "$APP_NAME" --query "[0].appId" -o tsv)"
+if [[ -z "$APP_ID" ]]; then
+  echo ">> Creating app registration '${APP_NAME}'"
+  APP_ID="$(az ad app create --display-name "$APP_NAME" --query appId -o tsv)"
+else
+  echo ">> App registration '${APP_NAME}' already exists (${APP_ID}) — reusing."
+fi
 
-echo ""
-echo ">> DONE. Store the JSON above as the pipeline secret AZURE_CREDENTIALS."
-echo ">> (Rotate/replace with OIDC federated credentials for production — see README.)"
+if [[ -z "$(az ad sp list --filter "appId eq '${APP_ID}'" --query "[0].id" -o tsv)" ]]; then
+  echo ">> Creating service principal for app"
+  az ad sp create --id "$APP_ID" --output none
+else
+  echo ">> Service principal already exists — reusing."
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Role assignment at scope (idempotent)
+# ---------------------------------------------------------------------------
+echo ">> Assigning '${ROLE_NAME}' to SP at scope"
+az role assignment create \
+  --assignee "$APP_ID" \
+  --role "$ROLE_NAME" \
+  --scope "$SCOPE" \
+  --output none 2>/dev/null \
+  && echo "   assigned." \
+  || echo "   assignment already present — skipping."
+
+# ---------------------------------------------------------------------------
+# 4. Federated credential for GitHub Actions OIDC (idempotent)
+#    subject must match GitHub's OIDC token for this repo/branch.
+# ---------------------------------------------------------------------------
+SUBJECT="repo:${GH_REPO}:ref:refs/heads/${BRANCH}"
+if [[ -z "$(az ad app federated-credential list --id "$APP_ID" --query "[?name=='${FIC_NAME}'].name" -o tsv 2>/dev/null)" ]]; then
+  echo ">> Creating federated credential '${FIC_NAME}'"
+  FIC_JSON="$(mktemp)"
+  cat > "$FIC_JSON" <<EOF
+{
+  "name": "${FIC_NAME}",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "${SUBJECT}",
+  "description": "GitHub Actions OIDC for ${GH_REPO}@${BRANCH}",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+EOF
+  az ad app federated-credential create --id "$APP_ID" --parameters "$FIC_JSON" --output none
+  rm -f "$FIC_JSON"
+else
+  echo ">> Federated credential '${FIC_NAME}' already exists — skipping."
+fi
+
+# ---------------------------------------------------------------------------
+# Output the three values for GitHub secrets
+# ---------------------------------------------------------------------------
+cat <<EOF
+
+============================================================================
+DONE. Set these as GitHub repo secrets (no client secret needed for OIDC):
+
+  AZURE_CLIENT_ID        ${APP_ID}
+  AZURE_TENANT_ID        ${TENANT_ID}
+  AZURE_SUBSCRIPTION_ID  ${SUBSCRIPTION_ID}
+
+Do it in one step:
+  ./scripts/set-github-secrets.sh ${GH_REPO} ${APP_ID} ${TENANT_ID} ${SUBSCRIPTION_ID}
+============================================================================
+EOF
