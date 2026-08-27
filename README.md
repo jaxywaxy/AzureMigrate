@@ -1,7 +1,32 @@
 # Azure Migrate Automation
 
-Automated, audited Azure Migrate onboarding so custodian teams can run AWS→Azure
-migrations **without direct or elevated Azure access**.
+Automated, audited Azure Migrate onboarding that **minimises the elevated access
+custodian teams need** — fully for agentless (VMware/Hyper-V), partially for AWS.
+
+## What this does — and doesn't — reduce
+
+Read this first. The value is real but **not uniform**, and it hinges on one hard
+constraint: **appliance registration is an interactive browser/device-code sign-in
+that creates a Microsoft Entra app — that step cannot be expressed as code.** Every
+design choice here is about pushing that irreducible manual step to the smallest
+possible privilege and the fewest possible hands.
+
+| Path | Does it reduce custodian access? | Detail |
+|---|---|---|
+| **Discovery + assessment** (all sources) | **Yes — clearly.** | The [preconfigured Entra app](https://learn.microsoft.com/azure/migrate/how-to-register-appliance-using-entra-app) flow lets us pre-create the appliance's identity + cert in code, so the custodian registers with **zero Entra roles** — the **Application Developer** requirement is eliminated. |
+| **Agentless migrate** (VMware/Hyper-V) | **Yes.** | Custodian needs only **RG-scoped `Azure Migrate Execute Expert`** on the central project + their existing landing-zone rights. |
+| **AWS / agent-based migrate** | **Not really — it *relocates*, not removes.** | The replication appliance has **no** preconfigured-app path (Microsoft mandates device-code). Someone must still hold **Contributor + User Access Administrator on the central subscription** and register it via browser. We shift that from *every custodian team* to *the platform team, once* — custodians drop to RG-scope, but the elevated privilege still has to **exist and be exercised**, just by fewer people. |
+
+**The honest one-liner:** this reduces access **for the many (custodian teams) by
+concentrating it in the few (platform team)** — least *distribution* of privilege. For
+an agentless estate that also means real *elimination* of the Application Developer
+blocker. For AWS, the org still needs a privileged platform team doing a manual,
+browser-based registration; the "no elevated access" story has an **AWS asterisk**.
+
+> **Bottom line for stakeholders:** VMware/Hyper-V → an unambiguous access reduction and
+> full automation. AWS-heavy → a better *custodian experience* and privilege *distribution*,
+> but not a removal of elevated access from the organisation. Prefer agentless where the
+> estate allows.
 
 ## Architecture — central shared project
 
@@ -256,10 +281,15 @@ Execute page even *selects the appliance from a drop-down* — so custodians run
 
 ## Security notes
 
-- Custodian teams get **zero** elevated Azure access from this pipeline — they use
-  the landing-zone rights they already hold, plus pipeline trigger rights.
-- Central project defaults to `publicNetworkAccess: Disabled` (Private Link only).
-- Storage: `allowBlobPublicAccess: false`, `minimumTlsVersion: TLS1_2`, HTTPS-only.
-- Prefer OIDC over the long-lived SP secret for anything beyond the prototype.
-- The custom role is `AssignableScopes`-bound to one subscription; widen deliberately.
+- Custodian teams get no elevated access **from this pipeline** — for discovery/assess
+  and agentless migrate they need only RG-scoped Execute Expert + their existing LZ
+  rights. **AWS is the exception** (see "What this does — and doesn't — reduce"): the
+  replication appliance still requires a privileged, browser-based registration, borne
+  once by the platform team.
+- The appliance Key Vault is RBAC-mode; the pipeline SP holds Certificates Officer.
+- Prefer OIDC over any long-lived SP secret.
+- The pipeline SP's custom role is `AssignableScopes`-bound to one subscription; widen
+  deliberately.
+- Providers, networking, DNS, and the central project itself are pre-provided by the
+  LZ build — this pipeline never creates them.
 - Private Link config is a platform action (needs sub-level rights) — never a custodian one.
