@@ -15,12 +15,12 @@
 # this feature existed.)
 #
 # Usage:
-#   ./grant-pipeline-graph-permissions.sh [pipeline-sp-app-id]
-#   (defaults to the sp-azure-migrate-automation app id)
+#   ./grant-pipeline-graph-permissions.sh <pipeline-sp-app-id>
+#   (the appId of the SP created by create-service-principal.sh)
 # ============================================================================
 set -euo pipefail
 
-PIPELINE_APP_ID="${1:-e53f8fd1-f45e-451f-b642-929912afbfce}"
+PIPELINE_APP_ID="${1:?pipeline SP app id required (appId of sp-azure-migrate-automation)}"
 
 GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"                 # Microsoft Graph
 PERM_ID="18a4783c-866b-4cc7-a460-3d5e5662c884"                      # Application.ReadWrite.OwnedBy (Role)

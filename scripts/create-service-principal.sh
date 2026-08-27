@@ -15,7 +15,7 @@
 #   ./create-service-principal.sh <subscription-id> <github-org/repo> [resource-group] [branch]
 #
 # Example:
-#   ./create-service-principal.sh 594e0bd0-... jaxywaxy/AzureMigrate rg-migrate-platform main
+#   ./create-service-principal.sh <subscription-id> <org>/<repo> rg-migrate-platform main
 #
 # On success it prints AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID
 # for you to store as GitHub repo secrets (see scripts/set-github-secrets.sh).
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 SUBSCRIPTION_ID="${1:?subscription id required}"
-GH_REPO="${2:?github org/repo required, e.g. jaxywaxy/AzureMigrate}"
+GH_REPO="${2:?github org/repo required, e.g. myorg/AzureMigrate}"
 RESOURCE_GROUP="${3:-}"          # optional — omit to scope at subscription level
 BRANCH="${4:-main}"             # branch the federated credential trusts
 

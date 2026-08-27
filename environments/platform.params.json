@@ -15,7 +15,7 @@
       "value": true
     },
     "pipelineSpObjectId": {
-      "value": "85dc1fab-6a3e-4236-8a38-2b8ef92b3e77"
+      "value": "REPLACE_WITH_PIPELINE_SP_OBJECT_ID"
     },
     "deployReplicationVault": {
       "value": false

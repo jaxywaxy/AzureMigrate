@@ -146,10 +146,10 @@ az login
 
 ```bash
 # Subscription-scoped:
-./scripts/create-service-principal.sh <subscription-id> jaxywaxy/AzureMigrate
+./scripts/create-service-principal.sh <subscription-id> <org>/<repo>
 
 # Or narrowed to a single RG (tighter blast radius):
-./scripts/create-service-principal.sh <subscription-id> jaxywaxy/AzureMigrate rg-migrate-platform
+./scripts/create-service-principal.sh <subscription-id> <org>/<repo> rg-migrate-platform
 ```
 
 This creates a least-privilege custom role (`Microsoft.Migrate/*`,
@@ -179,7 +179,7 @@ it needs to create app registrations, and refresh its custom role:
 
 ```bash
 ./scripts/grant-pipeline-graph-permissions.sh   # Graph Application.ReadWrite.OwnedBy + admin consent
-./scripts/create-service-principal.sh <sub-id> jaxywaxy/AzureMigrate   # re-run: expands the custom role
+./scripts/create-service-principal.sh <sub-id> <org>/<repo>   # re-run: expands the custom role
 ```
 
 **Per appliance (in the pipeline):** the **Onboard Custodian Team** workflow runs
