@@ -44,6 +44,11 @@ on the Migrate appliance docs page before deploying.
 Give the appliance a static or reserved IP and confirm outbound access to the
 Azure Migrate URLs (the appliance runs a connectivity check on first boot).
 
+> This runbook covers the **discovery/assessment appliance** — the one whose identity
+> the pipeline pre-created for you. **AWS/physical migration also needs a separate
+> *replication* appliance**, which the **platform team registers once and shares** (it
+> requires subscription-level rights you don't have). You don't set that up — see Step 7b.
+
 ---
 
 ## Step 2 — Install the appliance certificate
@@ -133,20 +138,50 @@ Open Registry Editor → `AzureAppliance` and confirm the values took.
 
 ## Step 7 — Migrate (Execute) into your landing zone
 
-You migrate into **your own landing zone**, using rights you already hold there
-(Owner/Contributor or Azure Migrate Execute Expert — from your LZ process, not this
-pipeline). For **agentless** VMware/Hyper-V, nothing is installed on the source VMs.
+You migrate into **your own landing zone**, using rights you already hold there. On the
+**central project** you need only **RG-scoped `Azure Migrate Execute Expert`** — no
+subscription-scope grant.
 
-1. In the project → **Execute → Migration → Start execution**. Choose **Servers/VMs
-   → Azure VM**, select your appliance, **Migration mode: Agentless**.
+**First, know which path applies — it depends on your source:**
+
+| Source | Method | Extra setup |
+|---|---|---|
+| VMware / Hyper-V | **Agentless** | none — nothing installed on source VMs |
+| **AWS EC2** / GCP / physical / other cloud | **Agent-based** | a **shared Replication Appliance** (registered once by the platform team) + **Mobility Agent** pushed to each source VM |
+
+> **AWS is agent-based — there is no agentless option.** You do **not** register the
+> replication appliance yourself (it needs subscription-level rights); the **platform team
+> registers one shared replication appliance** and you select it from a drop-down. If you
+> don't see a replication appliance available, ask the platform team to set it up.
+
+### 7a. Agentless (VMware / Hyper-V)
+
+1. Project → **Execute → Migration → Start execution** → **Servers/VMs → Azure VM**;
+   select your appliance, **Migration mode: Agentless**.
 2. **Target settings:** your subscription, target region, **your landing-zone RG**,
    VNet/subnet, availability + disk options.
-3. **Start replication.** Watch it move Preparation → Testing → Completion.
-4. **Test migration** into a non-prod VNet (recommended — doesn't touch source).
-5. **Migrate (cutover):** optionally shut down the source for a no-data-loss final
-   sync; the Azure VMs are created in your RG.
-6. **Complete migration** to stop replication and clean up. Then post-migration:
-   re-point DNS, validate the app, decommission the source, update docs.
+3. **Start replication** → Preparation → Testing → Completion.
+
+### 7b. Agent-based (AWS EC2 / physical)
+
+1. Project → **Execute → Migration → Start execution** → **Servers/VMs → Azure VM**.
+2. Under **How will you select workloads → Other sources**, choose **From a replication
+   appliance (Physical or others)** and **select the shared replication appliance**.
+3. Provide **guest credentials** — used to **push-install the Mobility Agent** onto each
+   source EC2 VM during Enable Replication.
+4. **Target settings:** your subscription, target region, **your landing-zone RG**,
+   VNet/subnet, disk options.
+5. **Start replication** → Preparation → Testing → Completion.
+
+### Both paths — finish the same way
+
+Once replication reaches the Testing stage:
+
+- **Test migration** into a non-prod VNet (recommended — doesn't touch source).
+- **Migrate (cutover):** optionally shut down the source for a no-data-loss final
+  sync; the Azure VMs are created in your RG.
+- **Complete migration** to stop replication and clean up. Then post-migration:
+  re-point DNS, validate the app, decommission the source, update docs.
 
 Monitor with PowerShell if you like:
 ```powershell
@@ -165,5 +200,6 @@ Get-AzMigrateServerMigrationStatus `
 | Private cert (`.pfx`) | central Key Vault, secret `appliance-<appliance-name>` |
 | Registers to | the **central** Migrate project (shared) |
 | Migrates into | **your** landing-zone RG (your existing rights) |
-| Azure roles you need | none from this pipeline; LZ rights you already have |
+| Azure roles you need | **RG-scoped `Azure Migrate Execute Expert`** on the central project (execute phase) + your existing LZ rights on the target. **No subscription-scope grant.** |
+| Replication appliance (AWS/physical only) | **platform-managed, shared** — you select it, you don't register it |
 | Source credentials | on-prem only (vCenter / Hyper-V / WinRM / SSH) |
