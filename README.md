@@ -16,7 +16,7 @@ main.bicep                          Migrate project + assessment project + stora
 environments/dev.params.json        Per-environment parameters
 scripts/create-service-principal.sh One-time SP + custom role setup
 scripts/deploy.sh                   what-if + deploy (used locally and by the pipeline)
-pipelines/deploy-migrate.yml        GitHub Actions workflow (OIDC or SP-secret auth)
+.github/workflows/deploy-migrate.yml  GitHub Actions workflow (OIDC or SP-secret auth)
 ```
 
 ## What gets deployed
@@ -58,7 +58,7 @@ SP for this repo/branch. The workflow's `id-token: write` permission is already 
 
 **Fallback — SP secret:** store the `create-for-rbac --json-auth` output as
 `AZURE_CREDENTIALS` and uncomment the SP-secret login block in
-`pipelines/deploy-migrate.yml`.
+`.github/workflows/deploy-migrate.yml`.
 
 ## Adding a new custodian team / project
 
