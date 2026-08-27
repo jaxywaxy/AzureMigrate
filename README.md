@@ -27,15 +27,33 @@ Two pipeline modes:
 
 - **`platform-bootstrap`** (`main.bicep`, run once): central project + Private
   Endpoint + DNS + Key Vault. Platform team, subscription-level rights.
-- **`onboard-team`** (`onboard-team.sh`, run per team): appliance identity against
-  the central project + Execute Expert on the team's target RG. No new project.
+- **`onboard-team`** (`onboard-team.sh`, run per team): the team's appliance identity
+  against the central project (Decide-and-Plan on the central RG). No new project,
+  and nothing in the team's landing zone.
+
+## How a team's VMs are grouped
+
+Within the shared central project, a team's servers are grouped two ways:
+
+- **By their appliance** (automatic) — each team registers their own appliance, so
+  its discovered servers are attributable to that appliance. Filter by appliance in
+  the portal, or scope PowerShell with `Get-AzMigrateServerMigrationStatus -ApplianceName`.
+- **By Groups** (manual) — an Azure Migrate *Group* is a named set of servers assessed
+  and migrated together as a wave. Each team builds their own.
+
+> **Visibility caveat:** grouping is organizational, not security isolation. Azure
+> Migrate has **no sub-project RBAC** — the built-in roles scope to the whole project.
+> Anyone with a role on the central project can *see* all discovered inventory and all
+> groups, not just their own. This estate accepts that (shared visibility of discovery
+> data). If teams must be prevented from seeing each other's inventory, use
+> **project-per-team** instead — at the cost of wiring Private Link per team.
 
 ## Why this approach
 
 A scoped **service principal** runs **Bicep** from a **pipeline**. Custodian teams
 trigger the pipeline; the SP does the privileged work and logs everything for audit.
-Custodians end up with **at most one** scoped Azure grant — `Execute Expert` on
-their own target RG.
+The pipeline operates only in the central Migrate subscription; teams migrate into
+their own landing zones using rights they already hold.
 
 ## Repo layout
 
