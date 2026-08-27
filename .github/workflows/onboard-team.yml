@@ -1,0 +1,72 @@
+# ============================================================================
+# GitHub Actions — onboard a custodian team onto the SHARED central Migrate
+# project. Creates the team's appliance identity (against the central project)
+# and grants the team Execute Expert on their OWN target resource group.
+#
+# Does NOT create a new Migrate project — teams share the central one.
+# Auth: same OIDC pipeline SP as the deploy workflow.
+# ============================================================================
+name: Onboard Custodian Team
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'GitHub environment (drives the OIDC federated credential)'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev]
+      centralResourceGroup:
+        description: 'Resource group of the central Migrate project'
+        required: true
+        default: 'rg-migrate-platform'
+      centralProjectName:
+        description: 'Name of the central Migrate project'
+        required: true
+        default: 'migrate-platform-central'
+      centralKeyVault:
+        description: 'Central Key Vault name (holds appliance certs)'
+        required: true
+      teamName:
+        description: 'Custodian team name (tagging + labels)'
+        required: true
+      applianceName:
+        description: 'Appliance name — UNIQUE per appliance (one app registration each)'
+        required: true
+      targetResourceGroup:
+        description: "Team's target RG where migrated VMs land (created if absent)"
+        required: true
+      teamPrincipalId:
+        description: "Object ID of the team's Entra GROUP to grant Execute Expert"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  onboard:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Onboard team
+        run: |
+          chmod +x scripts/onboard-team.sh scripts/prepare-appliance-identity.sh
+          ./scripts/onboard-team.sh \
+            "${{ inputs.centralResourceGroup }}" \
+            "${{ inputs.centralProjectName }}" \
+            "${{ inputs.centralKeyVault }}" \
+            "${{ inputs.teamName }}" \
+            "${{ inputs.applianceName }}" \
+            "${{ inputs.targetResourceGroup }}" \
+            "${{ inputs.teamPrincipalId }}"

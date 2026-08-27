@@ -1,13 +1,20 @@
 // ============================================================================
-// Azure Migrate project provisioning
+// Azure Migrate — PLATFORM BOOTSTRAP (central shared project)
 //
-// Deploys an Azure Migrate project (+ the assessment project used for
-// AWS -> Azure server assessments) and a supporting storage account, into a
-// resource group. Intended to be run by a scoped service principal from a
-// pipeline so custodian teams never touch Azure directly.
+// Deploys the ONE central Azure Migrate project the platform team owns:
+//   - migrate project + assessment project (public network access off by default)
+//   - supporting storage
+//   - optional Private Endpoint + Private DNS zones onto the hub VNet
+//   - Key Vault for appliance certificates
 //
-// Scope: resourceGroup. Create the RG first (see deploy.sh / pipeline) or let
-// the pipeline create it with `az group create`.
+// Custodian teams SHARE this project — each registers their own appliance to it
+// and migrates into their own target RG. They are onboarded separately (see
+// scripts/onboard-team.sh); this template is run ONCE by the platform team.
+//
+// Private Link note: configuring the private endpoint needs subscription
+// Contributor/UAA/Owner and is a platform action — never a custodian one.
+//
+// Scope: resourceGroup. Create the RG first (see deploy.sh / pipeline).
 // ============================================================================
 
 targetScope = 'resourceGroup'
@@ -43,6 +50,22 @@ param deployApplianceKeyVault bool = true
 
 @description('Object ID of the pipeline service principal, granted Key Vault Certificates Officer so it can generate appliance certs. Required when deployApplianceKeyVault is true.')
 param pipelineSpObjectId string = ''
+
+@description('Network access to the central Migrate project. Disabled = Private Link only (recommended for the central project).')
+@allowed([
+  'Disabled'
+  'Enabled'
+])
+param projectPublicNetworkAccess string = 'Disabled'
+
+@description('Deploy a Private Endpoint for the central Migrate project onto the hub VNet. Requires hubSubnetId.')
+param deployPrivateEndpoint bool = false
+
+@description('Resource ID of the hub subnet the private endpoint attaches to (e.g. /subscriptions/.../subnets/pe-subnet). Required when deployPrivateEndpoint is true.')
+param hubSubnetId string = ''
+
+@description('Resource ID of the hub VNet used to link the private DNS zones. Required when deployPrivateEndpoint is true.')
+param hubVnetId string = ''
 
 // ---------------------------------------------------------------------------
 // Variables
@@ -89,7 +112,7 @@ resource assessmentProject 'Microsoft.Migrate/assessmentProjects@2023-03-15' = {
   properties: {
     assessmentSolutionId: migrateProject.id
     projectStatus: 'Active'
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: projectPublicNetworkAccess
   }
 }
 
@@ -161,6 +184,74 @@ resource kvCertsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 }
 
 // ---------------------------------------------------------------------------
+// Private Link for the central Migrate project
+//
+// Private endpoint (groupId 'Default') + private DNS zone
+// 'privatelink.prod.migration.windowsazure.com' linked to the hub VNet, so
+// appliances resolve the project over the private network. This is the
+// platform-team boundary — configuring it needs subscription-level rights.
+// (Note: assessment tools also use storage/vault private endpoints; wire those
+// via the hub or extend here if your topology requires them.)
+// ---------------------------------------------------------------------------
+
+var migratePrivateDnsZoneName = 'privatelink.prod.migration.windowsazure.com'
+
+resource migratePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (deployPrivateEndpoint) {
+  name: 'pe-${projectName}'
+  location: location
+  tags: commonTags
+  properties: {
+    subnet: {
+      id: hubSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'plsc-${projectName}'
+        properties: {
+          privateLinkServiceId: assessmentProject.id
+          groupIds: [
+            'Default'
+          ]
+        }
+      }
+    ]
+  }
+}
+
+resource migratePrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (deployPrivateEndpoint) {
+  name: migratePrivateDnsZoneName
+  location: 'global'
+  tags: commonTags
+}
+
+resource migrateDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (deployPrivateEndpoint) {
+  parent: migratePrivateDnsZone
+  name: 'link-${uniqueString(hubVnetId)}'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: hubVnetId
+    }
+  }
+}
+
+resource migrateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (deployPrivateEndpoint) {
+  parent: migratePrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'migrate'
+        properties: {
+          privateDnsZoneId: migratePrivateDnsZone.id
+        }
+      }
+    ]
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
@@ -170,3 +261,5 @@ output assessmentProjectId string = assessmentProject.id
 output storageAccountName string = storage.name
 output resourceGroupName string = resourceGroup().name
 output keyVaultName string = deployApplianceKeyVault ? keyVault.name : ''
+output privateEndpointId string = deployPrivateEndpoint ? migratePrivateEndpoint.id : ''
+output projectPublicNetworkAccess string = projectPublicNetworkAccess

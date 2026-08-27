@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "projectName": {
+      "value": "migrate-platform-central"
+    },
+    "location": {
+      "value": "australiaeast"
+    },
+    "custodianTeam": {
+      "value": "platform"
+    },
+    "storageSku": {
+      "value": "Standard_LRS"
+    },
+    "deployApplianceKeyVault": {
+      "value": true
+    },
+    "pipelineSpObjectId": {
+      "value": "85dc1fab-6a3e-4236-8a38-2b8ef92b3e77"
+    },
+    "projectPublicNetworkAccess": {
+      "value": "Disabled"
+    },
+    "deployPrivateEndpoint": {
+      "value": true
+    },
+    "hubSubnetId": {
+      "value": "REPLACE-WITH/subscriptions/<sub>/resourceGroups/<hub-rg>/providers/Microsoft.Network/virtualNetworks/<hub-vnet>/subnets/<pe-subnet>"
+    },
+    "hubVnetId": {
+      "value": "REPLACE-WITH/subscriptions/<sub>/resourceGroups/<hub-rg>/providers/Microsoft.Network/virtualNetworks/<hub-vnet>"
+    }
+  }
+}

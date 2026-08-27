@@ -1,25 +1,56 @@
 # Azure Migrate Automation
 
-Automated, audited provisioning of Azure Migrate projects so custodian teams can
-spin up AWS→Azure migration assessments without direct Azure access.
+Automated, audited Azure Migrate onboarding so custodian teams can run AWS→Azure
+migrations **without direct or elevated Azure access**.
+
+## Architecture — central shared project
+
+The platform team runs **one central Migrate project** (with the private
+endpoint). Each custodian team registers **their own appliance** to that shared
+project and migrates VMs into **their own target resource group**. Isolation comes
+from separate appliances + separate target RGs + scoped RBAC — not separate
+projects (which would each need their own Private Link setup).
+
+```
+Central subscription (platform team)
+├─ Migrate PROJECT (private endpoint, private DNS)   ← shared, configured once
+├─ pipeline SP + Key Vault for appliance certs
+└─ per-team appliance identities (app reg + cert)
+
+Team A target RG                     Team B target RG
+├─ appliance A → central project     ├─ appliance B → central project
+└─ migrated VMs land here            └─ migrated VMs land here
+   (Team A: Execute Expert HERE only)   (Team B: Execute Expert HERE only)
+```
+
+Two pipeline modes:
+
+- **`platform-bootstrap`** (`main.bicep`, run once): central project + Private
+  Endpoint + DNS + Key Vault. Platform team, subscription-level rights.
+- **`onboard-team`** (`onboard-team.sh`, run per team): appliance identity against
+  the central project + Execute Expert on the team's target RG. No new project.
 
 ## Why this approach
 
-A scoped **service principal** runs **Bicep** from a **pipeline**. No template
-specs, no extra infra layers. Custodian teams trigger the pipeline; the SP does
-the deploy and logs everything for audit.
+A scoped **service principal** runs **Bicep** from a **pipeline**. Custodian teams
+trigger the pipeline; the SP does the privileged work and logs everything for audit.
+Custodians end up with **at most one** scoped Azure grant — `Execute Expert` on
+their own target RG.
 
 ## Repo layout
 
 ```
-main.bicep                              Migrate project + assessment project + storage + appliance Key Vault
-environments/dev.params.json            Per-environment parameters
+main.bicep                              PLATFORM BOOTSTRAP: central project + PE + DNS + storage + Key Vault
+environments/platform.params.json       Central bootstrap params (fill in hub VNet/subnet IDs)
+environments/dev.params.json            Single-project params (legacy / non-shared use)
 scripts/create-service-principal.sh     One-time pipeline SP + custom role setup
 scripts/grant-pipeline-graph-permissions.sh  One-time: Graph perm so the pipeline can create appliance apps
-scripts/prepare-appliance-identity.sh   Per-appliance: app reg + KV cert + role (preconfigured-app flow)
-scripts/deploy.sh                       what-if + deploy (used locally and by the pipeline)
+scripts/prepare-appliance-identity.sh   Per-appliance: app reg + KV cert + Decide-and-Plan role
+scripts/onboard-team.sh                 Per-team: appliance identity (central) + Execute Expert on team RG
+scripts/deploy.sh                       what-if + deploy (platform bootstrap)
 scripts/set-github-secrets.sh           Push the 3 OIDC values as repo secrets
-.github/workflows/deploy-migrate.yml    GitHub Actions workflow (OIDC or SP-secret auth)
+.github/workflows/deploy-migrate.yml    Platform bootstrap workflow
+.github/workflows/onboard-team.yml      Team onboarding workflow
 ```
 
 ## What gets deployed
@@ -104,15 +135,39 @@ it needs to create app registrations, and refresh its custom role:
 The custodian never needs Application Developer — only the ability to run the pipeline
 and read one Key Vault secret.
 
-## Adding a new custodian team / project
+## Onboarding a custodian team
 
-Copy `environments/dev.params.json` to `environments/<team>.params.json`, set
-`projectName` and `custodianTeam`, add the name to the workflow's `environment`
-choice list. One params file per project keeps the audit trail clean.
+Run the **Onboard Custodian Team** workflow (or `scripts/onboard-team.sh`) with the
+team's target RG, a unique appliance name, and the team's Entra **group** object ID.
+It creates the team's appliance identity against the central project and grants the
+group **Execute Expert** on their target RG only. No new Migrate project.
+
+```bash
+./scripts/onboard-team.sh \
+  rg-migrate-platform migrate-platform-central migkv<...> \
+  team-payments  team-payments-appliance01  rg-team-payments  <team-group-object-id>
+```
+
+## Who needs what (RBAC matrix)
+
+| Task | Who | Rights | Automated? |
+|---|---|---|---|
+| Central project + Private Link + DNS | Platform (once) | Sub Contributor/UAA | `main.bicep` |
+| Grant pipeline SP the Graph app-creation perm | Global Admin (once) | admin consent | `grant-pipeline-graph-permissions.sh` |
+| Per-team appliance identity (app+cert+role) | **Pipeline** | the Graph grant above | `prepare-appliance-identity.sh` |
+| Execute Expert on the team's target RG | **Pipeline** | `roleAssignments/write` | `onboard-team.sh` |
+| Stand up + register appliance, run discovery | Custodian, on-prem | **none in Azure** | manual (their network) |
+| Replicate + migrate (Execute) | Custodian | Execute Expert on **their RG only** | portal-driven |
+
+Custodians hold **at most one** scoped Azure role (`Execute Expert` on their own RG)
+and never anything tenant-level.
 
 ## Security notes
 
-- Custodian teams get **zero** direct Azure access — only pipeline trigger rights.
+- Custodian teams get **zero** elevated Azure access — a single scoped `Execute
+  Expert` role on their own target RG, and pipeline trigger rights.
+- Central project defaults to `publicNetworkAccess: Disabled` (Private Link only).
 - Storage: `allowBlobPublicAccess: false`, `minimumTlsVersion: TLS1_2`, HTTPS-only.
 - Prefer OIDC over the long-lived SP secret for anything beyond the prototype.
 - The custom role is `AssignableScopes`-bound to one subscription; widen deliberately.
+- Private Link config is a platform action (needs sub-level rights) — never a custodian one.
