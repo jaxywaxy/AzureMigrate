@@ -43,6 +43,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # --- DIAGNOSTIC: which client-id / identity is actually in use --------
+      - name: Diagnose identity (temporary)
+        run: |
+          CID='${{ secrets.AZURE_CLIENT_ID }}'
+          echo "AZURE_CLIENT_ID first8: ${CID:0:8}"
+          echo "expected (our SP)     : e53f8fd1"
+          echo "terraform SP          : bcfc3973"
+
       # --- OIDC login (preferred) -------------------------------------------
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -50,6 +58,11 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Show logged-in identity (temporary)
+        run: |
+          echo "Signed-in identity (appId should be our SP e53f8fd1):"
+          az account show --query "user" -o json
 
       # --- Fallback: SP secret (uncomment to use instead of OIDC) -----------
       # - name: Azure login (SP secret)
