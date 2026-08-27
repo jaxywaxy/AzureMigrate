@@ -23,6 +23,14 @@ on:
         description: 'Target resource group'
         required: true
         default: 'rg-migrate-dev'
+      projectName:
+        description: 'Migrate project name (must be UNIQUE within the subscription)'
+        required: true
+        default: 'migrate-dev-workload01'
+      custodianTeam:
+        description: 'Custodian team / workload owner (for tagging + audit)'
+        required: true
+        default: 'platform-migrations'
 
 permissions:
   id-token: write        # required for OIDC login
@@ -54,4 +62,7 @@ jobs:
           chmod +x scripts/deploy.sh
           ./scripts/deploy.sh \
             "${{ inputs.resourceGroup }}" \
-            "environments/${{ inputs.environment }}.params.json"
+            "environments/${{ inputs.environment }}.params.json" \
+            "australiaeast" \
+            "projectName=${{ inputs.projectName }}" \
+            "custodianTeam=${{ inputs.custodianTeam }}"
