@@ -87,17 +87,27 @@ fi
 # ---------------------------------------------------------------------------
 if [[ -z "$(az keyvault certificate list --vault-name "$KEY_VAULT_NAME" --query "[?name=='${CERT_NAME}'].name" -o tsv 2>/dev/null)" ]]; then
   echo ">> Generating self-signed cert '${CERT_NAME}' in Key Vault"
+  # Inline self-signed policy (RSA2048/SHA256, 1y). Self-contained rather than
+  # relying on `az keyvault certificate get-default-policy`, whose stdout is
+  # empty on some az versions. CN matches the appliance app.
   POLICY_JSON="$(mktemp)"
-  # Default self-signed policy, RSA2048/SHA256, CN matches the app.
-  az keyvault certificate get-default-policy > "$POLICY_JSON"
-  # Set the subject to the appliance app CN.
-  python3 - "$POLICY_JSON" "CN=${APP_NAME}" <<'PY'
-import json, sys
-path, subject = sys.argv[1], sys.argv[2]
-with open(path) as f: policy = json.load(f)
-policy["x509CertificateProperties"]["subject"] = subject
-with open(path, "w") as f: json.dump(policy, f)
-PY
+  cat > "$POLICY_JSON" <<EOF
+{
+  "issuerParameters": { "name": "Self" },
+  "keyProperties": {
+    "exportable": true,
+    "keySize": 2048,
+    "keyType": "RSA",
+    "reuseKey": false
+  },
+  "secretProperties": { "contentType": "application/x-pkcs12" },
+  "x509CertificateProperties": {
+    "subject": "CN=${APP_NAME}",
+    "validityInMonths": 12,
+    "keyUsage": [ "digitalSignature", "keyEncipherment" ]
+  }
+}
+EOF
   az keyvault certificate create \
     --vault-name "$KEY_VAULT_NAME" \
     --name "$CERT_NAME" \
